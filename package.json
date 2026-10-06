@@ -1,0 +1,15 @@
+{
+  "name": "decentraide-monorepo",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "frontend/shared"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:backend": "cd backend && mvn spring-boot:run",
+    "build": "npm run build --workspaces && cd backend && mvn compile",
+    "test": "npm run test --workspaces && cd backend && mvn test",
+    "lint": "npm run lint --workspaces"
+  }
+}
