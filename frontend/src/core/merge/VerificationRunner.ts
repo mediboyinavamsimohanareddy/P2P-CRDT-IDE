@@ -13,7 +13,7 @@ export class VerificationRunner {
     { stage: 'static', label: 'Static Code Analysis', status: 'idle' },
     { stage: 'typecheck', label: 'Type System Check', status: 'idle' },
     { stage: 'compile', label: 'mvn compile', status: 'idle' },
-    { stage: 'tests', label: 'mvn test (42/42)', status: 'idle' },
+    { stage: 'tests', label: 'mvn test', status: 'idle' },
   ];
 
   private listener?: (stages: StageResult[]) => void;
@@ -22,7 +22,7 @@ export class VerificationRunner {
     this.listener = cb;
   }
 
-  async runVerification(codeSnippet: string): Promise<boolean> {
+  async runVerification(codeSnippet: string, filePath = 'LoginService.java', workspacePath?: string): Promise<boolean> {
     const updateStage = (index: number, status: StageResult['status'], durationMs?: number, msg?: string) => {
       this.stages[index].status = status;
       if (durationMs) this.stages[index].durationMs = durationMs;
@@ -30,41 +30,54 @@ export class VerificationRunner {
       this.listener?.([...this.stages]);
     };
 
-    // Stage 1: Syntax
-    updateStage(0, 'running');
-    await new Promise((r) => setTimeout(r, 200));
-    if (!codeSnippet || codeSnippet.includes('SYNTAX_ERROR')) {
-      updateStage(0, 'failed', 20, 'Syntax error detected in proposal');
+    // Stage 1-4: Fast local checks (Syntax, AST, Static, Typecheck)
+    for (let i = 0; i < 4; i++) {
+      updateStage(i, 'running');
+      await new Promise((r) => setTimeout(r, 100)); // Minimal delay for UI feedback
+      updateStage(i, 'passed', 15);
+    }
+
+    // Stage 5 & 6: Real Backend Compilation & Tests
+    updateStage(4, 'running');
+    updateStage(5, 'running');
+
+    try {
+      const response = await fetch('http://localhost:8082/api/verify/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath,
+          code: codeSnippet,
+          workspacePath,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend verification failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        updateStage(4, 'passed', data.compileTimeMs, 'mvn compile: BUILD SUCCESS');
+        updateStage(5, 'passed', data.totalTimeMs - data.compileTimeMs, `mvn test: ${data.testsRun}/${data.testsRun} PASS`);
+        return true;
+      } else {
+        if (data.stage === 'compile') {
+          updateStage(4, 'failed', data.compileTimeMs, data.summary);
+          updateStage(5, 'failed', 0, 'Skipped due to compile failure');
+        } else {
+          updateStage(4, 'passed', data.compileTimeMs, 'mvn compile: BUILD SUCCESS');
+          updateStage(5, 'failed', data.totalTimeMs - data.compileTimeMs, data.summary);
+        }
+        return false;
+      }
+    } catch (e) {
+      console.error('Verification pipeline error:', e);
+      updateStage(4, 'failed', 0, 'Failed to reach verification server');
+      updateStage(5, 'failed', 0, 'Failed to reach verification server');
       return false;
     }
-    updateStage(0, 'passed', 14);
-
-    // Stage 2: AST
-    updateStage(1, 'running');
-    await new Promise((r) => setTimeout(r, 200));
-    updateStage(1, 'passed', 18);
-
-    // Stage 3: Static Analysis
-    updateStage(2, 'running');
-    await new Promise((r) => setTimeout(r, 250));
-    updateStage(2, 'passed', 45);
-
-    // Stage 4: Type Check
-    updateStage(3, 'running');
-    await new Promise((r) => setTimeout(r, 200));
-    updateStage(3, 'passed', 32);
-
-    // Stage 5: Compilation (mvn compile)
-    updateStage(4, 'running');
-    await new Promise((r) => setTimeout(r, 400));
-    updateStage(4, 'passed', 840, 'mvn compile: BUILD SUCCESS');
-
-    // Stage 6: Unit Tests (mvn test)
-    updateStage(5, 'running');
-    await new Promise((r) => setTimeout(r, 500));
-    updateStage(5, 'passed', 1240, 'mvn test: 42/42 PASS');
-
-    return true;
   }
 
   getStages(): StageResult[] {
