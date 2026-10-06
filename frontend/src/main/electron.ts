@@ -1,7 +1,11 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
 import chokidar from 'chokidar';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let watcher: InstanceType<typeof chokidar.FSWatcher> | null = null;

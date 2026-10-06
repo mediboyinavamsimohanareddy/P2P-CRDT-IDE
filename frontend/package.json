@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/main/index.js",
+  "main": "dist/main/electron.js",
   "scripts": {
     "dev": "vite",
     "dev:electron": "cross-env ELECTRON=true vite",
