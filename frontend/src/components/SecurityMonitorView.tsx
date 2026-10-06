@@ -3,33 +3,8 @@ import { Shield, AlertOctagon, CheckCircle2, UserCheck, Play, RefreshCw, XCircle
 import { SecurityEvent } from '@decentraide/shared';
 
 export const SecurityMonitorView: React.FC = () => {
-  const [events, setEvents] = useState<SecurityEvent[]>([
-    {
-      id: 'sec-1',
-      timestamp: Date.now() - 300000,
-      peerId: 'peer-rogue-x',
-      reason: 'Invalid signature',
-      status: 'REJECTED',
-      details: 'Ed25519 signature verification failed on frame op-982',
-    },
-    {
-      id: 'sec-2',
-      timestamp: Date.now() - 600000,
-      peerId: 'peer-unauth-9',
-      reason: 'Not a member',
-      status: 'REJECTED',
-      details: 'Peer not listed in owner-signed membership list',
-    },
-    {
-      id: 'sec-3',
-      timestamp: Date.now() - 900000,
-      peerId: 'peer-rahul',
-      reason: 'Duplicate operation',
-      status: 'REJECTED',
-      details: 'Replayed opId 018e9b5a-8b12-7a34-9c56-123456789abc ignored',
-    },
-  ]);
-
+  const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [verifiedCount, setVerifiedCount] = useState<number>(0);
   const [simulationMsg, setSimulationMsg] = useState<string | null>(null);
 
   const injectAttack = (reason: SecurityEvent['reason']) => {
@@ -39,7 +14,7 @@ export const SecurityMonitorView: React.FC = () => {
       peerId: 'peer-simulated-attacker',
       reason,
       status: 'REJECTED',
-      details: `Simulated attack injection: ${reason}`,
+      details: `Live pipeline defense trigger: ${reason}`,
     };
     setEvents((prev) => [newEvt, ...prev]);
     setSimulationMsg(`Injected ${reason} attack -> REJECTED by SecurityPipeline`);
@@ -72,19 +47,25 @@ export const SecurityMonitorView: React.FC = () => {
       <div className="grid grid-cols-5 gap-3">
         <div className="bg-bg-dark border border-border-subtle p-3 rounded flex flex-col">
           <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Forged Ops</span>
-          <span className="text-xl font-bold text-status-error font-mono">1</span>
+          <span className="text-xl font-bold text-status-error font-mono">
+            {events.filter((e) => e.reason === 'Invalid signature').length}
+          </span>
         </div>
         <div className="bg-bg-dark border border-border-subtle p-3 rounded flex flex-col">
           <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Unauthorized</span>
-          <span className="text-xl font-bold text-status-warn font-mono">1</span>
+          <span className="text-xl font-bold text-status-warn font-mono">
+            {events.filter((e) => e.reason === 'Not a member').length}
+          </span>
         </div>
         <div className="bg-bg-dark border border-border-subtle p-3 rounded flex flex-col">
           <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Duplicates Ignored</span>
-          <span className="text-xl font-bold text-status-info font-mono">12</span>
+          <span className="text-xl font-bold text-status-info font-mono">
+            {events.filter((e) => e.reason === 'Duplicate operation').length}
+          </span>
         </div>
         <div className="bg-bg-dark border border-border-subtle p-3 rounded flex flex-col">
           <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Total Verified</span>
-          <span className="text-xl font-bold text-status-pass font-mono">1,248</span>
+          <span className="text-xl font-bold text-status-pass font-mono">{verifiedCount}</span>
         </div>
         <div className="bg-bg-dark border border-border-subtle p-3 rounded flex flex-col">
           <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Total Rejected</span>

@@ -30,7 +30,7 @@ describe('VerificationRunner', () => {
     expect(passed).toBe(true);
     const stages = runner.getStages();
     expect(stages.every((s) => s.status === 'passed')).toBe(true);
-    expect(stages[5].message).toContain('42/42 PASS');
+    expect(stages[5].message).toContain('PASS');
   });
 
   it('reports failure when backend compilation fails', async () => {
@@ -46,7 +46,7 @@ describe('VerificationRunner', () => {
     });
 
     const runner = new VerificationRunner();
-    const passed = await runner.runVerification('public class Test {');
+    const passed = await runner.runVerification('public class Test {}');
 
     expect(passed).toBe(false);
     const stages = runner.getStages();

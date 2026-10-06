@@ -3,8 +3,19 @@ import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw } from
 import { VerificationRunner, StageResult } from '../core/merge/VerificationRunner';
 import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 import { OperationLogStore } from '../core/security/OperationLogStore';
+import { CrdtEngine } from '../core/crdt/CrdtEngine';
 
-export const ConflictResolutionView: React.FC = () => {
+interface ConflictResolutionViewProps {
+  activeFilePath?: string;
+  activeCode?: string;
+}
+
+export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
+  activeFilePath = 'LoginService.java',
+  activeCode
+}) => {
+  const defaultCode = activeCode || `public boolean validatePassword(String pass) {\n    if (pass == null) return false;\n    return pass.length() >= 8 && pass.matches(".*\\\\d.*");\n}`;
+  const [proposedCode, setProposedCode] = useState<string>(defaultCode);
   const [selectedVersion, setSelectedVersion] = useState<'A' | 'B' | 'C' | 'AI'>('AI');
   const [isVerifying, setIsVerifying] = useState(false);
   const [allPassed, setAllPassed] = useState(false);
@@ -15,7 +26,7 @@ export const ConflictResolutionView: React.FC = () => {
     { stage: 'static', label: 'Static Analysis', status: 'idle' },
     { stage: 'typecheck', label: 'Type Check', status: 'idle' },
     { stage: 'compile', label: 'mvn compile', status: 'idle' },
-    { stage: 'tests', label: 'mvn test (42/42)', status: 'idle' },
+    { stage: 'tests', label: 'mvn test', status: 'idle' },
   ]);
 
   const handleRunVerification = async () => {
@@ -28,8 +39,7 @@ export const ConflictResolutionView: React.FC = () => {
       setStages(updatedStages);
     });
 
-    const code = `public boolean validatePassword(String pass) {\n    if (pass == null) return false;\n    return pass.length() >= 8 && pass.matches(".*\\\\d.*");\n}`;
-    const res = await runner.runVerification(code);
+    const res = await runner.runVerification(proposedCode, activeFilePath);
 
     setIsVerifying(false);
     setAllPassed(res);
@@ -38,30 +48,38 @@ export const ConflictResolutionView: React.FC = () => {
   const handleAcceptMerge = () => {
     if (!allPassed) return;
 
+    // Apply merged code into active CRDT text buffer
+    const crdt = CrdtEngine.getInstance('peer-local');
+    const ytext = crdt.getText(activeFilePath);
+    if (ytext.length > 0) {
+      ytext.delete(0, ytext.length);
+    }
+    ytext.insert(0, proposedCode);
+
     // 1. Record merge in MergeHistoryStore
-    const nextMergeNum = MergeHistoryStore.getInstance().getRecords().length + 42;
+    const nextMergeNum = MergeHistoryStore.getInstance().getRecords().length + 1;
     MergeHistoryStore.getInstance().addRecord({
-      id: `MERGE #00${nextMergeNum}`,
-      file: 'LoginService.java',
-      functionName: 'validatePassword()',
-      participants: ['Arjun (You)', 'Rahul', 'Mohammed'],
-      aiModel: 'Llama 3.1 8B Instant (Groq)',
+      id: `MERGE #${nextMergeNum.toString().padStart(4, '0')}`,
+      file: activeFilePath,
+      functionName: 'Semantic Merge',
+      participants: ['Local Peer', 'Active Room'],
+      aiModel: 'Groq / Gemini AI',
       confidence: 94,
       status: 'ACCEPTED',
       timestamp: new Date().toLocaleTimeString(),
-      stateHash: 'e3b0...b855',
+      stateHash: crdt.getStateVector().toString(),
       verificationDetails: {
         syntax: true,
         ast: true,
         staticAnalysis: true,
         typeCheck: true,
         compilation: true,
-        tests: '42/42 PASS',
+        tests: 'GATES PASSED',
       },
     });
 
     // 2. Record operation in OperationLogStore
-    OperationLogStore.getInstance().logAppliedOp('Arjun (AI Merge)', 'UPDATE', 'LoginService.java');
+    OperationLogStore.getInstance().logAppliedOp('Local Peer (AI Merge)', 'UPDATE', activeFilePath);
 
     setIsStaged(true);
   };
