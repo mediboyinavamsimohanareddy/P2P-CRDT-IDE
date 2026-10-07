@@ -59,7 +59,27 @@ export class LanTransport implements Transport {
             if (header.workspaceId && header.workspaceId !== this.workspaceId) return;
 
             const payload = frame.slice(headerEnd + 1);
-            
+
+            // Check if this payload is a LAN discovery announcement message
+            try {
+              const payloadObj = JSON.parse(new TextDecoder().decode(payload));
+              if (payloadObj && (payloadObj.type === 'LAN_DISCOVERY_ANNOUNCE' || payloadObj.type === 'LAN_DISCOVERY_RESPONSE')) {
+                if (payloadObj.peerId && payloadObj.peerId !== this.localPeerId) {
+                  if (!this.connectedPeers.has(payloadObj.peerId)) {
+                    this.connectedPeers.set(payloadObj.peerId, { connectionType: 'broadcast' });
+                    this.peerStateCb?.(payloadObj.peerId, 'connected');
+
+                    if (payloadObj.type === 'LAN_DISCOVERY_ANNOUNCE') {
+                      this.sendDiscoveryResponse(payloadObj.peerId);
+                    }
+                  }
+                }
+                return;
+              }
+            } catch {
+              // Standard payload frame
+            }
+
             if (!this.connectedPeers.has(header.from)) {
               this.connectedPeers.set(header.from, { connectionType: 'broadcast' });
               this.peerStateCb?.(header.from, 'connected');
@@ -97,8 +117,6 @@ export class LanTransport implements Transport {
     if (this.connectedPeers.has(peerId)) return;
 
     this.peerStateCb?.(peerId, 'connecting');
-    this.connectedPeers.set(peerId, { connectionType: 'broadcast' });
-    this.peerStateCb?.(peerId, 'connected');
 
     // Send LAN Discovery Announce
     this.announcePresence();
@@ -166,6 +184,27 @@ export class LanTransport implements Transport {
 
       const headerBytes = new TextEncoder().encode(JSON.stringify({ from: this.localPeerId, workspaceId: this.workspaceId }) + '\n');
       const payloadBytes = new TextEncoder().encode(JSON.stringify(announcement));
+      const combined = new Uint8Array(headerBytes.length + payloadBytes.length);
+      combined.set(headerBytes, 0);
+      combined.set(payloadBytes, headerBytes.length);
+
+      this.activeLocalChannel.postMessage(combined);
+    }
+  }
+
+  private sendDiscoveryResponse(targetPeerId: string): void {
+    if (this.activeLocalChannel) {
+      const response: LanDiscoveryAnnouncement = {
+        type: 'LAN_DISCOVERY_RESPONSE',
+        peerId: this.localPeerId,
+        displayName: this.displayName,
+        workspaceId: this.workspaceId,
+        port: 8082,
+        protocolVersion: '1.0.0',
+      };
+
+      const headerBytes = new TextEncoder().encode(JSON.stringify({ from: this.localPeerId, target: targetPeerId, workspaceId: this.workspaceId }) + '\n');
+      const payloadBytes = new TextEncoder().encode(JSON.stringify(response));
       const combined = new Uint8Array(headerBytes.length + payloadBytes.length);
       combined.set(headerBytes, 0);
       combined.set(payloadBytes, headerBytes.length);

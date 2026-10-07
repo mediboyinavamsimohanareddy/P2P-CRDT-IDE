@@ -45,38 +45,6 @@ export class RoomPeerStore {
 
   setRoomId(roomId: string): void {
     this.roomId = roomId;
-
-    if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'test') {
-      // Poll room endpoint so peers in room registered via backend are shown
-      const pollRoomPeers = async () => {
-        try {
-          const res = await fetch(`/api/rooms/${roomId}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && Array.isArray(data.peers)) {
-              data.peers.forEach((pId: string) => {
-                if (pId !== this.localPeerId) {
-                  this.addPeer({
-                    id: pId,
-                    displayName: `Peer (${pId.length > 8 ? pId.substring(0, 6) : pId})`,
-                    role: 'Peer',
-                    status: 'connected',
-                    activity: 'Connected in room',
-                    color: '#4D96FF',
-                  });
-                }
-              });
-            }
-          }
-        } catch {
-          // Fallback
-        }
-      };
-
-      pollRoomPeers();
-      setInterval(pollRoomPeers, 3000);
-    }
-
     this.notify();
   };
 
