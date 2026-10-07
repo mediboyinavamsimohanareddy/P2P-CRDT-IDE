@@ -31,20 +31,98 @@ Provide ONLY the merged code without markdown fences.`;
 
     const offline = response.model.includes('Offline') || response.confidence < 50;
     const heuristic = this.heuristicMerge(conflict);
+    const proposedCode = offline ? heuristic : response.result;
+
+    const computedScore = this.computeScore(conflict, proposedCode, response);
 
     return {
       id: `prop-${Date.now()}`,
       conflictId: conflict.id,
-      proposedCode: offline ? heuristic : response.result,
-      rationale: offline
-        ? 'Ollama Local Fallback: Combined concurrent statements into unified runnable block.'
-        : `Ollama AI merged concurrent statements with ${response.confidence}% confidence.`,
-      confidence: response.confidence || 90,
+      proposedCode,
+      rationale: computedScore.rationale,
+      confidence: computedScore.confidence,
       model: response.model,
       contextHash: 'ctx-hash-12345',
       status: 'pending',
       generatedAt: Date.now(),
     };
+  }
+
+  public computeScore(
+    conflict: Conflict,
+    proposedCode: string,
+    aiResponse?: { confidence: number; model: string }
+  ): { confidence: number; rationale: string } {
+    const versionA = conflict.versions[0]?.codeSnippet || '';
+    const versionB = conflict.versions[1]?.codeSnippet || '';
+
+    let baseScore = aiResponse?.confidence && aiResponse.confidence > 0 ? aiResponse.confidence : 85;
+    const notes: string[] = [];
+
+    // AST / Syntax Balance Check
+    const countBrackets = (code: string) => {
+      const open = (code.match(/[\{\(\[]/g) || []).length;
+      const close = (code.match(/[\}\)\]]/g) || []).length;
+      return open === close;
+    };
+
+    if (countBrackets(proposedCode)) {
+      baseScore += 5;
+      notes.push('Balanced block brackets and syntax scope');
+    } else {
+      baseScore -= 15;
+      notes.push('Unbalanced delimiters detected');
+    }
+
+    // Preservation of User Intent/Tokens
+    const tokensA = new Set(versionA.split(/\W+/).filter((t) => t.length > 2));
+    const tokensB = new Set(versionB.split(/\W+/).filter((t) => t.length > 2));
+    const proposedTokens = new Set(proposedCode.split(/\W+/).filter((t) => t.length > 2));
+
+    let preservedCount = 0;
+    let totalTokens = 0;
+
+    for (const t of tokensA) {
+      totalTokens++;
+      if (proposedTokens.has(t)) preservedCount++;
+    }
+    for (const t of tokensB) {
+      totalTokens++;
+      if (proposedTokens.has(t)) preservedCount++;
+    }
+
+    const preservationRatio = totalTokens > 0 ? preservedCount / totalTokens : 1;
+    if (preservationRatio > 0.8) {
+      baseScore += 5;
+      notes.push(`High token preservation (${Math.round(preservationRatio * 100)}%)`);
+    } else if (preservationRatio < 0.5) {
+      baseScore -= 10;
+      notes.push(`Low token preservation (${Math.round(preservationRatio * 100)}%)`);
+    }
+
+    // Variable Conflict Check
+    const variablesA = Array.from(versionA.matchAll(/(?:int|double|String|boolean|var)\s+(\w+)\s*=/g)).map((m) => m[1]);
+    const variablesB = Array.from(versionB.matchAll(/(?:int|double|String|boolean|var)\s+(\w+)\s*=/g)).map((m) => m[1]);
+    const duplicateVars = variablesA.filter((v) => variablesB.includes(v));
+
+    if (duplicateVars.length > 0) {
+      // Check if duplicate var was safely renamed in proposedCode (e.g., a -> a2)
+      const handled = duplicateVars.every((v) => proposedCode.includes(`${v}2`) || proposedCode.includes(`${v}_`));
+      if (handled) {
+        baseScore += 5;
+        notes.push(`Variable collisions resolved (${duplicateVars.join(', ')})`);
+      } else {
+        baseScore -= 10;
+        notes.push(`Potential duplicate variable name collision (${duplicateVars.join(', ')})`);
+      }
+    } else {
+      notes.push('No variable declaration collisions detected');
+    }
+
+    const confidence = Math.min(99, Math.max(30, Math.round(baseScore)));
+    const rationale = `Calculated confidence ${confidence}% based on: ${notes.join('; ')}.`;
+
+    return { confidence, rationale };
   }
 
   heuristicMerge(conflict: Conflict): string {

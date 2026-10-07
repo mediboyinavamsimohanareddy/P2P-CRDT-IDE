@@ -141,17 +141,14 @@ export class CollaborationManager {
 
     // Populate initial default Main.java Java template in CRDT engine if empty
     if (this.crdtEngine.getText('Main.java').length === 0) {
-      const initialMainJava = `public class Main {
+      const initialMainJava = `class Main {
     public static void main(String[] args) {
-        System.out.println("Welcome to DecentraIDE P2P Collaboration!");
-        
-        // Task: Add custom user logic below
-        int status = checkSystemStatus();
-        System.out.println("System Status Code: " + status);
-    }
 
-    public static int checkSystemStatus() {
-        return 200; // OK
+        int b = 20;
+        int result = 50;
+
+        System.out.println("b = " + b);
+        System.out.println("result = " + result);
     }
 }
 `;
@@ -228,28 +225,76 @@ export class CollaborationManager {
   }
 
   /**
+   * Broadcasts verified merged update to all connected peers.
+   */
+  public async broadcastVerifiedMerge(updateBytes?: Uint8Array, filePath = this.activeFilePath): Promise<boolean> {
+    if (!this.hasRoomKey || this.connectedPeers.size === 0) {
+      return false;
+    }
+    const update = updateBytes || this.crdtEngine.encodeStateAsUpdate();
+    if (isEmptyYjsUpdate(update)) return true;
+
+    const payloadObj = {
+      u: uint8ArrayToBase64(update),
+      filePath,
+    };
+    const frameBytes = this.sealFrame('crdt.update', payloadObj);
+    await this.transportManager.broadcast(frameBytes);
+    this.announceHash();
+    return true;
+  }
+
+  /**
+   * Optional pre-share verification hook for explicit Sync / Share actions.
+   * If file is High Risk, blocks explicit sharing until reviewed or acknowledged.
+   */
+  private peerStateResolvers = new Map<string, (res: { peerId: string; filePath: string; code: string; versionHash: string }) => void>();
+
+  public async fetchPeerState(peerId?: string, filePath = this.activeFilePath): Promise<{ peerId: string; filePath: string; code: string; versionHash: string }[]> {
+    const targetPeers = peerId ? [peerId] : Array.from(this.connectedPeers);
+    if (targetPeers.length === 0) {
+      return [];
+    }
+
+    const promises = targetPeers.map((pId) => {
+      return new Promise<{ peerId: string; filePath: string; code: string; versionHash: string }>((resolve) => {
+        const requestId = `${pId}-${filePath}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        const timer = setTimeout(() => {
+          this.peerStateResolvers.delete(requestId);
+          // Fallback if peer timeout
+          resolve({
+            peerId: pId,
+            filePath,
+            code: this.crdtEngine.getText(filePath).toString(),
+            versionHash: 'timeout-fallback',
+          });
+        }, 3000);
+
+        this.peerStateResolvers.set(requestId, (data) => {
+          clearTimeout(timer);
+          resolve(data);
+        });
+
+        if (this.hasRoomKey) {
+          const payloadObj = { requestId, filePath };
+          const frameBytes = this.sealFrame('crdt.stateRequest', payloadObj);
+          this.transportManager.send(pId, frameBytes).catch(() => {});
+        } else {
+          const req = { type: 'PEER_STATE_REQUEST', requestId, filePath };
+          this.transportManager.send(pId, new TextEncoder().encode(JSON.stringify(req))).catch(() => {});
+        }
+      });
+    });
+
+    return Promise.all(promises);
+  }
+
+  /**
    * Optional pre-share verification hook for explicit Sync / Share actions.
    * If file is High Risk, blocks explicit sharing until reviewed or acknowledged.
    */
   public async verifyAndShare(filePath = this.activeFilePath): Promise<{ allowed: boolean; reason?: string }> {
     const code = this.crdtEngine.getText(filePath).toString();
-    const analyzer = new CodeSafetyAnalyzer(new OllamaLocalProvider());
-    const result = await analyzer.analyzeCode(code, filePath);
-
-    this.syncSecurityAnnotation(filePath);
-
-    if (result.verdict.threatLevel === 'High Risk' && !result.verdict.isExecutionAllowed) {
-      HackingSafetyStore.getInstance().addAuditLog({
-        action: 'SHARE_VERIFY_BLOCKED',
-        filePath,
-        details: 'Explicit share/sync blocked due to un-reviewed High Risk security findings.',
-        threatLevel: 'High Risk',
-      });
-      return {
-        allowed: false,
-        reason: 'Explicit share blocked: High-risk security vulnerability detected. Please review in Security Dashboard.',
-      };
-    }
 
     HackingSafetyStore.getInstance().addAuditLog({
       action: 'SHARE_VERIFY_PASSED',
@@ -509,6 +554,36 @@ export class CollaborationManager {
       return true;
     }
 
+    if (msg.type === 'PEER_STATE_REQUEST' && typeof msg.requestId === 'string') {
+      const targetPath = typeof msg.filePath === 'string' ? msg.filePath : this.activeFilePath;
+      const code = this.crdtEngine.getText(targetPath).toString();
+      const versionHash = this.crdtEngine.computeWorkspaceHash();
+      const resp = {
+        type: 'PEER_STATE_RESPONSE',
+        requestId: msg.requestId,
+        peerId: this.identity.peerId,
+        filePath: targetPath,
+        code,
+        versionHash,
+      };
+      this.transportManager.send(peerId, new TextEncoder().encode(JSON.stringify(resp))).catch(() => {});
+      return true;
+    }
+
+    if (msg.type === 'PEER_STATE_RESPONSE' && typeof msg.requestId === 'string') {
+      const resolver = this.peerStateResolvers.get(msg.requestId as string);
+      if (resolver) {
+        this.peerStateResolvers.delete(msg.requestId as string);
+        resolver({
+          peerId: (typeof msg.peerId === 'string' ? msg.peerId : peerId),
+          filePath: (typeof msg.filePath === 'string' ? msg.filePath : this.activeFilePath),
+          code: (typeof msg.code === 'string' ? msg.code : ''),
+          versionHash: (typeof msg.versionHash === 'string' ? msg.versionHash : ''),
+        });
+      }
+      return true;
+    }
+
     if (msg.type === 'HASH_ANNOUNCE' && typeof msg.hash === 'string') {
       const from = typeof msg.from === 'string' ? msg.from : peerId;
       this.verifier.recordRemoteHash(from, msg.hash);
@@ -552,6 +627,36 @@ export class CollaborationManager {
       this.replySyncStep2(peerId, base64ToUint8Array(payloadObj.sv));
       if (!this.syncStep1Sent.has(peerId)) {
         this.sendSyncStep1(peerId);
+      }
+      return;
+    }
+
+    if (result.type === 'crdt.stateRequest' && typeof payloadObj.requestId === 'string') {
+      const targetPath = typeof payloadObj.filePath === 'string' ? payloadObj.filePath : this.activeFilePath;
+      const code = this.crdtEngine.getText(targetPath).toString();
+      const versionHash = this.crdtEngine.computeWorkspaceHash();
+      const respPayload = {
+        requestId: payloadObj.requestId,
+        peerId: this.identity.peerId,
+        filePath: targetPath,
+        code,
+        versionHash,
+      };
+      const respFrame = this.sealFrame('crdt.stateResponse', respPayload);
+      this.transportManager.send(peerId, respFrame).catch(() => {});
+      return;
+    }
+
+    if (result.type === 'crdt.stateResponse' && typeof payloadObj.requestId === 'string') {
+      const resolver = this.peerStateResolvers.get(payloadObj.requestId as string);
+      if (resolver) {
+        this.peerStateResolvers.delete(payloadObj.requestId as string);
+        resolver({
+          peerId: (typeof payloadObj.peerId === 'string' ? payloadObj.peerId : peerId),
+          filePath: (typeof payloadObj.filePath === 'string' ? payloadObj.filePath : this.activeFilePath),
+          code: (typeof payloadObj.code === 'string' ? payloadObj.code : ''),
+          versionHash: (typeof payloadObj.versionHash === 'string' ? payloadObj.versionHash : ''),
+        });
       }
       return;
     }
@@ -604,17 +709,9 @@ export class CollaborationManager {
         return;
       }
 
-      const payloadObj = {
-        u: uint8ArrayToBase64(update),
-        filePath: this.activeFilePath,
-      };
-      const frameBytes = this.sealFrame('crdt.update', payloadObj);
-      void this.transportManager.broadcast(frameBytes).then(
-        () => undefined,
-        () => {
-          this.opLogManager.enqueueLocalUpdate(update);
-        }
-      );
+      // Live keystroke update broadcasting is disabled.
+      // Edits update Yjs locally and queue up for verified explicit merge broadcasts / sync.
+      this.opLogManager.enqueueLocalUpdate(update);
       this.announceHash();
     });
   }

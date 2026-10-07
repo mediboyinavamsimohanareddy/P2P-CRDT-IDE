@@ -14,6 +14,8 @@ export const FrameSchema = z.object({
     'crdt.update',
     'crdt.syncStep1',
     'crdt.syncStep2',
+    'crdt.stateRequest',
+    'crdt.stateResponse',
     'hash.announce',
     'presence',
     'ai.proposal',

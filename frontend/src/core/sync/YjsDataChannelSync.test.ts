@@ -109,16 +109,18 @@ describe('Yjs DataChannel synchronization', () => {
     expect(host.getVerifier().hashesMatchPeers()).toBe(true);
   });
 
-  it('live edits travel both directions through Yjs', async () => {
+  it('verified merge broadcast travels through Yjs and DataChannel', async () => {
     host.getCrdtEngine().getText('Main.java').delete(0, host.getCrdtEngine().getText('Main.java').length);
     joiner.getCrdtEngine().getText('Main.java').delete(0, joiner.getCrdtEngine().getText('Main.java').length);
     await connectPair(hostDc, joinerDc);
 
     host.getCrdtEngine().getText('Main.java').insert(0, 'A');
+    await host.broadcastVerifiedMerge();
     await Promise.resolve();
     expect(joiner.getCrdtEngine().getText('Main.java').toString()).toBe('A');
 
     joiner.getCrdtEngine().getText('Main.java').insert(1, 'B');
+    await joiner.broadcastVerifiedMerge();
     await Promise.resolve();
     expect(host.getCrdtEngine().getText('Main.java').toString()).toBe('AB');
     expect(host.getCrdtEngine().computeWorkspaceHash()).toBe(joiner.getCrdtEngine().computeWorkspaceHash());
@@ -133,6 +135,7 @@ describe('Yjs DataChannel synchronization', () => {
 
     const outboundBefore = hostDc.sent.length;
     joiner.getCrdtEngine().getText('Main.java').insert(0, 'from-joiner');
+    await joiner.broadcastVerifiedMerge();
     await Promise.resolve();
 
     const hostAfterRemote = hostDc.sent.filter((bytes) => {
