@@ -61,7 +61,7 @@ export const AppShell: React.FC = () => {
     return () => {
       unbind();
     };
-  }, [activeTab?.id, activeTab?.filePath]);
+  }, [activeTab?.id, activeTab?.filePath, updateTabContent]);
 
   const handleContentChange = (tabId: string, newContent: string) => {
     updateTabContent(tabId, newContent);

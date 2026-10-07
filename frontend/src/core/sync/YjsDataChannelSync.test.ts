@@ -98,6 +98,7 @@ describe('Yjs DataChannel synchronization', () => {
   });
 
   it('late joiner receives existing project state via syncStep1/step2', async () => {
+    host.getCrdtEngine().getText('Main.java').delete(0, host.getCrdtEngine().getText('Main.java').length);
     host.getCrdtEngine().getText('Main.java').insert(0, 'class Host {}');
 
     await connectPair(hostDc, joinerDc);
@@ -108,6 +109,8 @@ describe('Yjs DataChannel synchronization', () => {
   });
 
   it('live edits travel both directions through Yjs', async () => {
+    host.getCrdtEngine().getText('Main.java').delete(0, host.getCrdtEngine().getText('Main.java').length);
+    joiner.getCrdtEngine().getText('Main.java').delete(0, joiner.getCrdtEngine().getText('Main.java').length);
     await connectPair(hostDc, joinerDc);
 
     host.getCrdtEngine().getText('Main.java').insert(0, 'A');
@@ -121,6 +124,8 @@ describe('Yjs DataChannel synchronization', () => {
   });
 
   it('remote updates do not echo back as new local Yjs sends', async () => {
+    host.getCrdtEngine().getText('Main.java').delete(0, host.getCrdtEngine().getText('Main.java').length);
+    joiner.getCrdtEngine().getText('Main.java').delete(0, joiner.getCrdtEngine().getText('Main.java').length);
     await connectPair(hostDc, joinerDc);
     hostDc.sent = [];
     joinerDc.sent = [];

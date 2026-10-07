@@ -131,6 +131,25 @@ export class CollaborationManager {
     this.transportManager = options?.transportManager ?? new TransportManager('default-workspace');
     this.setupTransportListeners();
     this.setupCrdtListeners();
+
+    // Populate initial default Main.java Java template in CRDT engine if empty
+    if (this.crdtEngine.getText('Main.java').length === 0) {
+      const initialMainJava = `public class Main {
+    public static void main(String[] args) {
+        System.out.println("Welcome to DecentraIDE P2P Collaboration!");
+        
+        // Task: Add custom user logic below
+        int status = checkSystemStatus();
+        System.out.println("System Status Code: " + status);
+    }
+
+    public static int checkSystemStatus() {
+        return 200; // OK
+    }
+}
+`;
+      this.crdtEngine.getText('Main.java').insert(0, initialMainJava);
+    }
   }
 
   public getCrdtEngine(): YjsCrdtEngine {
@@ -277,6 +296,12 @@ export class CollaborationManager {
       this.setupCrdtListeners();
       this.opLogManager.clearPending();
       this.verifier = new ConvergenceVerifier(this.crdtEngine, this.identity.peerId);
+    } else if (!this.isHost) {
+      // Clear host starter template on joining peers so syncStep1/2 supplies the accurate host workspace state
+      const text = this.crdtEngine.getText('Main.java');
+      if (text.length > 0) {
+        text.delete(0, text.length);
+      }
     }
 
     if (!this.isStarted) {

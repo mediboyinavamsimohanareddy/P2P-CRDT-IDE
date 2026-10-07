@@ -29,15 +29,33 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
   const [joinError, setJoinError] = useState<string | null>(null);
   const [lanJoinUrl, setLanJoinUrl] = useState<string | null>(null);
 
+  const [crdtFiles, setCrdtFiles] = useState<string[]>([]);
+
   useEffect(() => {
     const store = RoomPeerStore.getInstance();
     setPeers(store.getPeers());
     setRoomId(store.getRoomId());
 
-    return store.subscribe(() => {
+    const updateCrdtFileList = () => {
+      const engine = CollaborationManager.getInstance().getCrdtEngine();
+      const keys = Array.from(engine.getDoc().share.keys()).filter((k) => k !== 'metadata');
+      setCrdtFiles(keys);
+    };
+
+    updateCrdtFileList();
+    const unsubPeerStore = store.subscribe(() => {
       setPeers(store.getPeers());
       setRoomId(store.getRoomId());
     });
+
+    const unsubCrdt = CollaborationManager.getInstance().getCrdtEngine().onUpdate(() => {
+      updateCrdtFileList();
+    });
+
+    return () => {
+      unsubPeerStore();
+      unsubCrdt();
+    };
   }, []);
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -244,9 +262,9 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
           )}
 
           <div className="pl-2 pt-1 font-mono text-[12px] text-gray-400 flex flex-col gap-1">
-            {!workspaceRoot ? (
+            {!workspaceRoot && crdtFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-6 gap-3">
-                <span className="text-gray-500 text-[11px] font-sans text-center px-4">No folder opened</span>
+                <span className="text-gray-500 text-[11px] font-sans text-center px-4">No workspace folder opened</span>
                 {isElectron && (
                   <button
                     onClick={openFolder}
@@ -258,27 +276,52 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
               </div>
             ) : (
               <>
-                <div className="text-gray-200 font-bold truncate" title={workspaceRoot}>
-                  {workspaceRoot.split(/[/\\]/).pop()}
+                <div className="text-gray-200 font-bold truncate" title={workspaceRoot || 'P2P Synced Workspace'}>
+                  {workspaceRoot ? workspaceRoot.split(/[/\\]/).pop() : 'Synced Workspace'}
                 </div>
-                {files.map((file: FileEntry, idx: number) => {
-                  const isOpened = activeFilePath && (activeFilePath === file.path || activeFilePath.endsWith(file.name));
+                {workspaceRoot &&
+                  files.map((file: FileEntry, idx: number) => {
+                    const isOpened = activeFilePath && (activeFilePath === file.path || activeFilePath.endsWith(file.name));
+                    return (
+                      <div
+                        key={idx}
+                        onClick={() => !file.isDirectory && onOpenFile?.(file.path)}
+                        className={`pl-3 flex items-center gap-1.5 py-0.5 rounded cursor-pointer truncate transition-colors ${
+                          isOpened ? 'bg-bg-hover text-accent-mint font-semibold' : 'hover:bg-bg-hover'
+                        }`}
+                        title={file.name}
+                      >
+                        {file.isDirectory ? (
+                          <Folder className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                        ) : (
+                          <File className={`w-3.5 h-3.5 shrink-0 ${isOpened ? 'text-accent-mint' : 'text-gray-500'}`} />
+                        )}
+                        <span className={file.isDirectory ? 'text-gray-300' : isOpened ? 'text-accent-mint' : 'text-gray-400'}>
+                          {file.name}
+                        </span>
+                      </div>
+                    );
+                  })}
+
+                {/* Dynamically synced CRDT files (in web or P2P session) */}
+                {crdtFiles.map((crdtPath, idx) => {
+                  const fileName = crdtPath.split(/[/\\]/).pop() || crdtPath;
+                  const alreadyInLocalFs = workspaceRoot && files.some((f) => f.path === crdtPath || f.name === fileName);
+                  if (alreadyInLocalFs) return null;
+
+                  const isOpened = activeFilePath === crdtPath;
                   return (
                     <div
-                      key={idx}
-                      onClick={() => !file.isDirectory && onOpenFile?.(file.path)}
+                      key={`crdt-${idx}`}
+                      onClick={() => onOpenFile?.(crdtPath)}
                       className={`pl-3 flex items-center gap-1.5 py-0.5 rounded cursor-pointer truncate transition-colors ${
                         isOpened ? 'bg-bg-hover text-accent-mint font-semibold' : 'hover:bg-bg-hover'
                       }`}
-                      title={file.name}
+                      title={`${crdtPath} (P2P Synced)`}
                     >
-                      {file.isDirectory ? (
-                        <Folder className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                      ) : (
-                        <File className={`w-3.5 h-3.5 shrink-0 ${isOpened ? 'text-accent-mint' : 'text-gray-500'}`} />
-                      )}
-                      <span className={file.isDirectory ? 'text-gray-300' : isOpened ? 'text-accent-mint' : 'text-gray-400'}>
-                        {file.name}
+                      <File className={`w-3.5 h-3.5 shrink-0 ${isOpened ? 'text-accent-mint' : 'text-accent-mint/70'}`} />
+                      <span className={isOpened ? 'text-accent-mint font-bold' : 'text-gray-300'}>
+                        {fileName}
                       </span>
                     </div>
                   );

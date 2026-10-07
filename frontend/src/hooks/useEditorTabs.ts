@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { CollaborationManager } from '../core/sync/CollaborationManager';
 
 export interface EditorTab {
   id: string;
@@ -40,6 +41,11 @@ export function useEditorTabs() {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
+  // Auto-open Main.java on initial load
+  useEffect(() => {
+    openFile('Main.java');
+  }, []);
+
   const openFile = useCallback(async (filePath: string) => {
     // Check if already open
     const existing = tabs.find((t) => t.filePath === filePath);
@@ -49,7 +55,10 @@ export function useEditorTabs() {
     }
 
     let content = '';
-    if (window.electronAPI) {
+    const existingYText = CollaborationManager.getInstance().getCrdtEngine().getText(filePath).toString();
+    if (existingYText) {
+      content = existingYText;
+    } else if (window.electronAPI) {
       const fileContent = await window.electronAPI.fs.readFile(filePath);
       content = fileContent ?? '';
     } else {
