@@ -63,19 +63,6 @@ export class RoomPeerStore {
       transport.start();
     }
 
-    // When joining or creating a room, ensure active room peers are registered
-    if (!this.peers.some((p) => p.role === 'Peer')) {
-      const roomPeerNum = Math.floor(Math.random() * 800) + 100;
-      this.addPeer({
-        id: `peer-${roomId.toLowerCase()}-${roomPeerNum}`,
-        displayName: `Peer Laptop (${roomId.substring(0, 6)})`,
-        role: 'Peer',
-        status: 'connected',
-        activity: 'Collaborating in room ' + roomId,
-        color: '#4D96FF',
-      });
-    }
-
     this.notify();
   };
 

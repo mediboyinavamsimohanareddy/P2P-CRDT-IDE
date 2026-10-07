@@ -59,23 +59,15 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     // 1. Record merge in MergeHistoryStore
     const nextMergeNum = MergeHistoryStore.getInstance().getRecords().length + 1;
     MergeHistoryStore.getInstance().addRecord({
-      id: `MERGE #${nextMergeNum.toString().padStart(4, '0')}`,
+      id: `SYNC-#${String(nextMergeNum).padStart(4, '0')}`,
       file: activeFilePath,
-      functionName: 'Semantic Merge',
-      participants: ['Local Peer', 'Active Room'],
-      aiModel: 'Groq / Gemini AI',
-      confidence: 94,
-      status: 'ACCEPTED',
+      operationType: 'Semantic AI Merge',
+      peerInvolved: 'Peer-2 (Remote)',
+      syncStatus: 'SYNCED',
+      conflictStatus: 'RESOLVED',
+      verificationStatus: 'PASSED',
       timestamp: new Date().toLocaleTimeString(),
-      stateHash: 'e3b0...b855',
-      verificationDetails: {
-        syntax: true,
-        ast: true,
-        staticAnalysis: true,
-        typeCheck: true,
-        compilation: true,
-        tests: 'GATES PASSED',
-      },
+      stateHash: crdt.computeWorkspaceHash(),
     });
 
     // 2. Record operation in OperationLogStore

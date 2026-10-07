@@ -5,21 +5,13 @@ import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 export interface MergeHistoryRecord {
   id: string;
   file: string;
-  functionName: string;
-  participants: string[];
-  aiModel: string;
-  confidence: number;
-  status: 'ACCEPTED' | 'REJECTED' | 'PENDING';
+  operationType: string;
+  peerInvolved: string;
+  syncStatus: 'SYNCED' | 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  conflictStatus: 'RESOLVED' | 'NO_CONFLICT' | 'CONFLICT_DETECTED';
+  verificationStatus: 'PASSED' | 'FAILED' | 'VERIFYING' | 'SKIPPED';
   timestamp: string;
-  stateHash: string;
-  verificationDetails: {
-    syntax: boolean;
-    ast: boolean;
-    staticAnalysis: boolean;
-    typeCheck: boolean;
-    compilation: boolean;
-    tests: string;
-  };
+  stateHash?: string;
 }
 
 export const RightPanel: React.FC = () => {
@@ -80,52 +72,70 @@ export const RightPanel: React.FC = () => {
               Semantic Merge Audit Trail ({mergeRecords.length})
             </div>
 
-            {mergeRecords.map((record) => (
-              <div
-                key={record.id}
-                className="bg-bg-panel border border-border-subtle rounded p-3 flex flex-col gap-2 font-sans text-xs"
-              >
-                <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
-                  <span className="font-bold text-gray-200 flex items-center gap-1.5">
-                    <GitMerge className="w-3.5 h-3.5 text-accent-mint" />
-                    {record.id}
-                  </span>
-                  <span className="bg-status-pass/20 text-status-pass border border-status-pass/30 text-[10px] px-1.5 py-0.5 rounded font-bold font-mono">
-                    {record.status}
-                  </span>
-                </div>
-
-                <div className="flex flex-col gap-1 text-[11px] text-gray-400">
-                  <div className="flex justify-between items-center">
-                    <span className="flex items-center gap-1 text-gray-300 font-mono">
-                      <FileCode className="w-3 h-3 text-gray-500" />
-                      {record.file}
-                    </span>
-                    <span className="text-[10px] text-gray-500 font-mono">{record.functionName}</span>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-1 text-[10px] text-gray-500">
-                    <span>Participants: {record.participants.join(', ')}</span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-2.5 h-2.5" />
-                      {record.timestamp}
-                    </span>
-                  </div>
-
-                  <div className="bg-bg-darkest p-2 rounded border border-border-subtle mt-1 flex flex-col gap-1 font-mono text-[10px]">
-                    <div className="flex justify-between text-gray-400">
-                      <span>Engine: {record.aiModel}</span>
-                      <span className="text-status-pass">{record.confidence}% conf</span>
-                    </div>
-                    <div className="text-gray-500">Replica SHA: {record.stateHash}</div>
-                    <div className="flex items-center gap-1 text-status-pass pt-0.5">
-                      <Check className="w-3 h-3" />
-                      <span>Passed compile &amp; tests ({record.verificationDetails.tests})</span>
-                    </div>
-                  </div>
-                </div>
+            {mergeRecords.length === 0 ? (
+              <div className="text-gray-500 text-xs italic text-center py-6">
+                No merge or synchronization records available.
               </div>
-            ))}
+            ) : (
+              mergeRecords.map((record) => (
+                <div
+                  key={record.id}
+                  className="bg-bg-panel border border-border-subtle rounded p-3 flex flex-col gap-2 font-sans text-xs"
+                >
+                  <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+                    <span className="font-bold text-gray-200 flex items-center gap-1.5">
+                      <GitMerge className="w-3.5 h-3.5 text-accent-mint" />
+                      {record.id}
+                    </span>
+                    <span className={`border text-[10px] px-1.5 py-0.5 rounded font-bold font-mono ${
+                      record.syncStatus === 'SYNCED' || record.syncStatus === 'ACCEPTED'
+                        ? 'bg-status-pass/20 text-status-pass border-status-pass/30'
+                        : record.syncStatus === 'REJECTED'
+                        ? 'bg-status-error/20 text-status-error border-status-error/30'
+                        : 'bg-status-warn/20 text-status-warn border-status-warn/30'
+                    }`}>
+                      {record.syncStatus}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 text-[11px] text-gray-400">
+                    <div className="flex justify-between items-center">
+                      <span className="flex items-center gap-1 text-gray-200 font-mono font-semibold">
+                        <FileCode className="w-3.5 h-3.5 text-gray-500" />
+                        {record.file}
+                      </span>
+                      <span className="text-[10px] text-gray-500 font-mono">{record.operationType}</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1 bg-bg-darkest p-2 rounded border border-border-subtle text-[10px] font-mono mt-0.5">
+                      <div>
+                        <span className="text-gray-500">Peer: </span>
+                        <span className="text-gray-300">{record.peerInvolved}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Time: </span>
+                        <span className="text-gray-300">{record.timestamp}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Conflict: </span>
+                        <span className="text-gray-300">{record.conflictStatus}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Verification: </span>
+                        <span className={record.verificationStatus === 'PASSED' ? 'text-status-pass font-bold' : record.verificationStatus === 'FAILED' ? 'text-status-error font-bold' : 'text-gray-300'}>
+                          {record.verificationStatus}
+                        </span>
+                      </div>
+                      {record.stateHash && (
+                        <div className="col-span-2 pt-1 border-t border-border-subtle/50 text-gray-500 truncate">
+                          Hash: {record.stateHash}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-3 font-sans text-xs">

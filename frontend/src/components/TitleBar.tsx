@@ -150,15 +150,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
                 </button>
                 <button
                   onClick={() => {
-                    onSelectView?.('conflict');
-                    setActiveMenu(null);
-                  }}
-                  className="px-3 py-1.5 hover:bg-bg-hover text-left flex items-center gap-2"
-                >
-                  <span>Conflict Resolution</span>
-                </button>
-                <button
-                  onClick={() => {
                     onSelectView?.('security');
                     setActiveMenu(null);
                   }}
@@ -243,16 +234,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
               >
                 <span>Open Network Topology &amp; P2P Sync</span>
                 <span className="text-[10px] text-gray-500 font-mono">View</span>
-              </div>
-              <div
-                onClick={() => {
-                  onSelectView?.('conflict');
-                  setShowCommandPalette(false);
-                }}
-                className="p-2 hover:bg-bg-hover rounded text-gray-200 flex items-center justify-between cursor-pointer"
-              >
-                <span>Resolve Semantic Overlap (LoginService.java)</span>
-                <span className="text-[10px] text-gray-500 font-mono">Conflict</span>
               </div>
               <div
                 onClick={() => {

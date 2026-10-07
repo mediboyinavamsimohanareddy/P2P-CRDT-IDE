@@ -4,9 +4,8 @@ import { TerminalComponent } from './TerminalComponent';
 import { OperationLogStore, LogEntry } from '../core/security/OperationLogStore';
 
 export const BottomPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'terminal' | 'verification' | 'oplog' | 'demo'>('verification');
+  const [activeTab, setActiveTab] = useState<'terminal' | 'verification' | 'oplog'>('verification');
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [simulationStatus, setSimulationStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const store = OperationLogStore.getInstance();
@@ -15,43 +14,6 @@ export const BottomPanel: React.FC = () => {
       setLogs(store.getEntries());
     });
   }, []);
-
-  const triggerSimulation = (action: string) => {
-    const store = OperationLogStore.getInstance();
-    if (action === 'disconnect') {
-      setSimulationStatus('Peer C Network Connection Terminated');
-      store.logRejectedSecurityEvent({
-        id: `sec-${Date.now()}`,
-        timestamp: Date.now(),
-        peerId: 'Laptop-C',
-        reason: 'Not a member',
-        status: 'REJECTED',
-        details: 'Peer C socket disconnected',
-      });
-    } else if (action === 'duplicate') {
-      setSimulationStatus('Duplicate Op Injected');
-      store.logRejectedSecurityEvent({
-        id: `sec-${Date.now()}`,
-        timestamp: Date.now(),
-        peerId: 'Laptop-B',
-        reason: 'Duplicate operation',
-        status: 'REJECTED',
-        details: 'Replayed opId 018e9b5a-8b12-7a34-9c56-123456789abc',
-      });
-    } else if (action === 'malformed') {
-      setSimulationStatus('Malformed Payload Injected');
-      store.logRejectedSecurityEvent({
-        id: `sec-${Date.now()}`,
-        timestamp: Date.now(),
-        peerId: 'Laptop-B',
-        reason: 'Malformed payload',
-        status: 'REJECTED',
-        details: 'Frame schema validation failed',
-      });
-    }
-
-    setTimeout(() => setSimulationStatus(null), 3000);
-  };
 
   return (
     <div
@@ -89,18 +51,6 @@ export const BottomPanel: React.FC = () => {
           <FileText className="w-3.5 h-3.5" />
           <span>Operation Log</span>
           <span className="bg-bg-hover px-1.5 rounded-full text-[9px] font-mono">{logs.length}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('demo')}
-          className={`ml-auto flex items-center gap-1.5 px-3 py-1 rounded transition-colors ${
-            activeTab === 'demo'
-              ? 'bg-status-warn/20 text-status-warn border-t-2 border-status-warn'
-              : 'text-status-warn hover:bg-bg-hover'
-          }`}
-        >
-          <Play className="w-3.5 h-3.5" />
-          <span>Demo Controls</span>
         </button>
       </div>
 
@@ -151,40 +101,6 @@ export const BottomPanel: React.FC = () => {
               )}
             </tbody>
           </table>
-        </div>
-      ) : activeTab === 'demo' ? (
-        <div className="flex-1 p-3 bg-bg-darkest flex flex-col gap-3 font-sans text-xs">
-          <div className="flex justify-between items-center">
-            <span className="font-semibold text-gray-200">Failure Simulation &amp; Injection Drawer</span>
-            {simulationStatus && (
-              <span className="bg-status-error/20 text-status-error px-2 py-0.5 rounded font-mono text-[10px] animate-pulse">
-                {simulationStatus}
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              onClick={() => triggerSimulation('disconnect')}
-              className="bg-bg-panel border border-status-warn/30 hover:border-status-warn text-status-warn p-2 rounded text-left flex flex-col gap-1"
-            >
-              <span className="font-bold">Disconnect Peer C</span>
-              <span className="text-[10px] text-gray-500">Simulate physical network failure</span>
-            </button>
-            <button
-              onClick={() => triggerSimulation('duplicate')}
-              className="bg-bg-panel border border-status-info/30 hover:border-status-info text-status-info p-2 rounded text-left flex flex-col gap-1"
-            >
-              <span className="font-bold">Send Duplicate Op</span>
-              <span className="text-[10px] text-gray-500">Replay seen operation ID</span>
-            </button>
-            <button
-              onClick={() => triggerSimulation('malformed')}
-              className="bg-bg-panel border border-status-error/30 hover:border-status-error text-status-error p-2 rounded text-left flex flex-col gap-1"
-            >
-              <span className="font-bold">Send Malformed Op</span>
-              <span className="text-[10px] text-gray-500">Inject corrupt schema payload</span>
-            </button>
-          </div>
         </div>
       ) : (
         <div className="flex-1 p-3 font-mono text-[11px] overflow-y-auto bg-bg-darkest text-gray-300">

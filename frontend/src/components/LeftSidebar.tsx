@@ -8,10 +8,11 @@ interface LeftSidebarProps {
   onOpenFile?: (path: string) => void;
   activeView?: string;
   onSelectView?: (view: string) => void;
+  activeFilePath?: string;
 }
 
-export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView, onSelectView }) => {
-  const { isElectron, workspaceRoot, files, openFolder, writeFile, createDir } = useFileSystem();
+export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView, onSelectView, activeFilePath }) => {
+  const { isElectron, workspaceRoot, files, openFolder, writeFile, createDir, refreshFiles } = useFileSystem();
 
   const [creatingType, setCreatingType] = useState<'file' | 'folder' | null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -41,11 +42,13 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
     if (creatingType === 'file') {
       if (writeFile) {
         await writeFile(targetPath, `// New file: ${newItemName}\npublic class ${newItemName.split('.')[0]} {}\n`);
+        await refreshFiles();
       }
       onOpenFile?.(targetPath);
     } else if (creatingType === 'folder') {
       if (createDir) {
         await createDir(targetPath);
+        await refreshFiles();
       }
     }
 
@@ -127,19 +130,6 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
               <span>Source Control</span>
             </div>
             <span className="bg-bg-panel border border-border-subtle text-[10px] px-1.5 rounded-full text-gray-400 font-mono">2</span>
-          </div>
-
-          <div
-            onClick={() => onSelectView?.('conflict')}
-            className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer ${
-              activeView === 'conflict' ? 'bg-bg-hover text-gray-200 font-medium' : 'hover:bg-bg-hover text-gray-400'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5 text-status-warn" />
-              <span>Conflict Resolution</span>
-            </div>
-            <span className="bg-status-warn/20 text-status-warn text-[10px] px-1.5 rounded-full font-bold font-mono">2</span>
           </div>
 
           <div
@@ -236,62 +226,45 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
           )}
 
           <div className="pl-2 pt-1 font-mono text-[12px] text-gray-400 flex flex-col gap-1">
-            {!isElectron ? (
-              <div className="flex flex-col gap-1">
-                <div className="text-gray-200 font-bold truncate">decentra-auth</div>
-                <div
-                  onClick={() => onOpenFile?.('src/main/java/auth/LoginService.java')}
-                  className="pl-3 flex items-center gap-1.5 hover:bg-bg-hover py-0.5 rounded cursor-pointer truncate text-accent-mint"
-                >
-                  <File className="w-3.5 h-3.5 shrink-0" />
-                  <span>LoginService.java</span>
-                  <span className="text-status-warn font-bold">!</span>
-                </div>
-                <div
-                  onClick={() => onOpenFile?.('src/main/java/auth/UserRepository.java')}
-                  className="pl-3 flex items-center gap-1.5 hover:bg-bg-hover py-0.5 rounded cursor-pointer truncate text-gray-300"
-                >
-                  <File className="w-3.5 h-3.5 shrink-0" />
-                  <span>UserRepository.java</span>
-                </div>
-                <div
-                  onClick={() => onOpenFile?.('pom.xml')}
-                  className="pl-3 flex items-center gap-1.5 hover:bg-bg-hover py-0.5 rounded cursor-pointer truncate text-gray-400"
-                >
-                  <File className="w-3.5 h-3.5 shrink-0" />
-                  <span>pom.xml</span>
-                </div>
-              </div>
-            ) : !workspaceRoot ? (
+            {!workspaceRoot ? (
               <div className="flex flex-col items-center justify-center py-6 gap-3">
                 <span className="text-gray-500 text-[11px] font-sans text-center px-4">No folder opened</span>
-                <button
-                  onClick={openFolder}
-                  className="bg-accent-mint hover:bg-accent-mintHover text-bg-darkest font-semibold py-1 px-3 rounded text-xs font-sans"
-                >
-                  Open Folder
-                </button>
+                {isElectron && (
+                  <button
+                    onClick={openFolder}
+                    className="bg-accent-mint hover:bg-accent-mintHover text-bg-darkest font-semibold py-1 px-3 rounded text-xs font-sans"
+                  >
+                    Open Folder
+                  </button>
+                )}
               </div>
             ) : (
               <>
                 <div className="text-gray-200 font-bold truncate" title={workspaceRoot}>
                   {workspaceRoot.split(/[/\\]/).pop()}
                 </div>
-                {files.map((file: FileEntry, idx: number) => (
-                  <div
-                    key={idx}
-                    onClick={() => !file.isDirectory && onOpenFile?.(file.path)}
-                    className="pl-3 flex items-center gap-1.5 hover:bg-bg-hover py-0.5 rounded cursor-pointer truncate"
-                    title={file.name}
-                  >
-                    {file.isDirectory ? (
-                      <Folder className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    ) : (
-                      <File className="w-3.5 h-3.5 text-gray-500 shrink-0" />
-                    )}
-                    <span className={file.isDirectory ? 'text-gray-300' : 'text-gray-400'}>{file.name}</span>
-                  </div>
-                ))}
+                {files.map((file: FileEntry, idx: number) => {
+                  const isOpened = activeFilePath && (activeFilePath === file.path || activeFilePath.endsWith(file.name));
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => !file.isDirectory && onOpenFile?.(file.path)}
+                      className={`pl-3 flex items-center gap-1.5 py-0.5 rounded cursor-pointer truncate transition-colors ${
+                        isOpened ? 'bg-bg-hover text-accent-mint font-semibold' : 'hover:bg-bg-hover'
+                      }`}
+                      title={file.name}
+                    >
+                      {file.isDirectory ? (
+                        <Folder className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                      ) : (
+                        <File className={`w-3.5 h-3.5 shrink-0 ${isOpened ? 'text-accent-mint' : 'text-gray-500'}`} />
+                      )}
+                      <span className={file.isDirectory ? 'text-gray-300' : isOpened ? 'text-accent-mint' : 'text-gray-400'}>
+                        {file.name}
+                      </span>
+                    </div>
+                  );
+                })}
               </>
             )}
           </div>

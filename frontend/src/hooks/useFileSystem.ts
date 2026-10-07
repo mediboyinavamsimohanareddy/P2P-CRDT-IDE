@@ -47,12 +47,19 @@ export function useFileSystem() {
     };
   }, [workspaceRoot, loadDirectory]);
 
+  const refreshFiles = useCallback(async () => {
+    if (workspaceRoot) {
+      await loadDirectory(workspaceRoot);
+    }
+  }, [workspaceRoot, loadDirectory]);
+
   return {
     isElectron,
     workspaceRoot,
     files,
     openFolder,
     loadDirectory,
+    refreshFiles,
     readFile: window.electronAPI?.fs.readFile,
     writeFile: window.electronAPI?.fs.writeFile,
     createDir: window.electronAPI?.fs.createDir,

@@ -64,6 +64,7 @@ export const AppShell: React.FC = () => {
           }}
           activeView={activeView}
           onSelectView={(view) => setActiveView(view as any)}
+          activeFilePath={activeTab?.filePath}
         />
 
         <div className="flex flex-col flex-1 overflow-hidden border-x border-border-subtle">

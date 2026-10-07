@@ -14,7 +14,7 @@ export interface LogEntry {
 export class OperationLogStore {
   private static instance: OperationLogStore;
   private entries: LogEntry[] = [];
-  private counter = 180; // Starting index for realistic demo logs
+  private counter = 1; // Starting index for live operations
   private listeners: Array<() => void> = [];
 
   public static getInstance(): OperationLogStore {

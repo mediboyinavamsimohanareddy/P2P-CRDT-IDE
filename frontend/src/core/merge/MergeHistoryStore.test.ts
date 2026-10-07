@@ -7,28 +7,20 @@ describe('MergeHistoryStore', () => {
     const initialCount = store.getRecords().length;
 
     store.addRecord({
-      id: 'MERGE #0043',
+      id: 'SYNC-#0043',
       file: 'AuthPolicy.java',
-      functionName: 'checkRole()',
-      participants: ['Peer 1'],
-      aiModel: 'Llama 3.1 8B Instant (Groq)',
-      confidence: 96,
-      status: 'ACCEPTED',
+      operationType: 'P2P Synchronization',
+      peerInvolved: 'Peer 1',
+      syncStatus: 'SYNCED',
+      conflictStatus: 'RESOLVED',
+      verificationStatus: 'PASSED',
       timestamp: '12:50:00',
       stateHash: 'ABCD...1234',
-      verificationDetails: {
-        syntax: true,
-        ast: true,
-        staticAnalysis: true,
-        typeCheck: true,
-        compilation: true,
-        tests: '42/42 PASS',
-      },
     });
 
     const records = store.getRecords();
     expect(records.length).toBe(initialCount + 1);
-    expect(records[0].id).toBe('MERGE #0043');
+    expect(records[0].id).toBe('SYNC-#0043');
     expect(records[0].file).toBe('AuthPolicy.java');
   });
 });
