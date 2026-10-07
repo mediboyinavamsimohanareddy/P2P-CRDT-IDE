@@ -152,7 +152,6 @@ export class TransportManager {
     }
 
     if (selected !== this.activeTransportType) {
-      console.log(`[TransportManager] Failover triggered: switching from ${this.activeTransportType} -> ${selected}`);
       this.selectTransport(selected);
     }
 
