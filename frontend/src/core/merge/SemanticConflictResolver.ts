@@ -138,18 +138,24 @@ Provide ONLY the merged code without markdown fences.`;
       mergedLines.add(l);
     }
 
-    // Handle duplicate variable names (e.g. if both declared int a = 10 and int a = 20)
+    // Handle duplicate variable names (e.g. if both declared int a = 10 and int a = 20/30)
     const result: string[] = [];
     const declaredVars = new Set<string>();
 
     for (const line of Array.from(mergedLines)) {
       const declMatch = line.match(/(int|double|String|boolean|var)\s+(\w+)\s*=/);
       if (declMatch) {
+        const varType = declMatch[1];
         const varName = declMatch[2];
         if (declaredVars.has(varName)) {
-          // Rename conflicting duplicate variable (e.g. a -> a2)
+          // Rename conflicting duplicate variable (e.g. a = 30 -> a2 = 30)
           const newVarName = `${varName}2`;
-          result.push(line.replace(` ${varName} `, ` ${newVarName} `).replace(` ${varName}=`, ` ${newVarName}=`));
+          // Replace declaration 'int a =' with 'int a2 =' or variable word matches
+          const renamedLine = line.replace(
+            new RegExp(`\\b${varType}\\s+${varName}\\b`),
+            `${varType} ${newVarName}`
+          );
+          result.push(renamedLine);
           declaredVars.add(newVarName);
         } else {
           declaredVars.add(varName);
