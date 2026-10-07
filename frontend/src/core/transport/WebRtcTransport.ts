@@ -1,7 +1,7 @@
 import { Transport, TransportType, TransportStats } from './Transport';
 
 export interface WebRtcSignalingMessage {
-  type: 'offer' | 'answer' | 'ice-candidate';
+  type: 'offer' | 'answer' | 'ice-candidate' | 'join-announcement';
   roomId: string;
   from: string;
   target?: string;
@@ -47,6 +47,12 @@ export class WebRtcTransport implements Transport {
 
         this.ws.onopen = () => {
           console.log('[WebRtcTransport] Connected to signaling server');
+          // Announce presence in room to initiate WebRTC offers with active peers
+          this.sendSignaling({
+            type: 'join-announcement',
+            roomId: this.roomId,
+            from: this.localPeerId,
+          });
           resolve();
         };
 
@@ -212,7 +218,10 @@ export class WebRtcTransport implements Transport {
   private async handleSignalingMessage(msg: WebRtcSignalingMessage) {
     const { from, type, sdp, candidate } = msg;
 
-    if (type === 'offer') {
+    if (type === 'join-announcement') {
+      // When a new peer joins the room, send them an offer to open WebRTC DataChannel
+      await this.connect(from);
+    } else if (type === 'offer') {
       let pc = this.peerConnections.get(from);
       if (!pc) {
         pc = this.createPeerConnection(from);

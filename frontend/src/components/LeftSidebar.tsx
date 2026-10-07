@@ -75,6 +75,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
+    alert(`Room ${newRoomId} created successfully! Invite link copied to clipboard.`);
   };
 
   const handleJoinRoom = async () => {

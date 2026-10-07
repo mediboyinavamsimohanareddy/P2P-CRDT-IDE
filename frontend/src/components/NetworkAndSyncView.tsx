@@ -28,12 +28,14 @@ export const NetworkAndSyncView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'DecentraWorkspace', peerId: RoomPeerStore.getInstance().getLocalPeerId() }),
       });
-      const data = await res.json();
-      if (data.success && data.roomId) {
-        newRoomId = data.roomId;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.roomId) {
+          newRoomId = data.roomId;
+        }
       }
     } catch {
-      // Fallback to offline room ID
+      // Offline fallback mode
     }
 
     RoomPeerStore.getInstance().setRoomId(newRoomId);
@@ -42,6 +44,7 @@ export const NetworkAndSyncView: React.FC = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
+    alert(`Room ${newRoomId} created successfully! Invite link copied to clipboard.`);
   };
 
   const handleJoinRoom = () => {

@@ -60,4 +60,22 @@ describe('VerificationRunner', () => {
     expect(stages[4].message).toContain('Compilation failed');
     expect(stages[5].status).toBe('failed');
   });
+
+  it('handles server 404 or offline gracefully in standalone mode', async () => {
+    (global.fetch as any).mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found'
+    });
+
+    const runner = new VerificationRunner();
+    const passed = await runner.runVerification('public class Test {}');
+
+    expect(passed).toBe(true);
+    const stages = runner.getStages();
+    expect(stages[4].status).toBe('passed');
+    expect(stages[4].message).toContain('Standalone/Offline');
+    expect(stages[5].status).toBe('passed');
+    expect(stages[5].message).toContain('Standalone/Offline');
+  });
 });

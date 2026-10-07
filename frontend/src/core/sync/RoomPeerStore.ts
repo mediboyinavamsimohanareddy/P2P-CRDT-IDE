@@ -24,11 +24,14 @@ export class RoomPeerStore {
   }
 
   constructor() {
-    // Default initial state: Local peer only (1 peer connected) - strictly connected live peers
+    // Generate a unique local peer ID per client tab/laptop instance
+    this.localPeerId = 'peer-' + Math.random().toString(36).substring(2, 8);
+
+    // Default initial state: Local peer only
     this.peers = [
       {
         id: this.localPeerId,
-        displayName: 'You (Local Host)',
+        displayName: `You (${this.localPeerId.substring(5)})`,
         role: 'Host',
         status: 'connected',
         activity: 'Editing active workspace',
