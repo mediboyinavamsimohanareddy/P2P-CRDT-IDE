@@ -5,16 +5,20 @@ import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 import { OperationLogStore } from '../core/security/OperationLogStore';
 import { YjsCrdtEngine } from '../core/crdt/CrdtEngine';
 
-interface ConflictResolutionViewProps {
+export interface ConflictResolutionViewProps {
+  crdtEngine?: YjsCrdtEngine;
   activeFilePath?: string;
   activeCode?: string;
+  onApplyResolvedCode?: (resolvedCode: string) => void;
 }
 
 export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
+  crdtEngine,
   activeFilePath = 'LoginService.java',
-  activeCode
+  activeCode,
+  onApplyResolvedCode,
 }) => {
-  const defaultCode = activeCode || `public boolean validatePassword(String pass) {\n    if (pass == null) return false;\n    return pass.length() >= 8 && pass.matches(".*\\\\d.*");\n}`;
+  const defaultCode = activeCode || `public boolean validatePassword(String pass) {\n    if (pass == null) return false;\n    // Groq Merged: Length check (>=8) combined with digit requirement\n    return pass.length() >= 8 && pass.matches(".*\\\\d.*");\n}`;
   const [proposedCode, setProposedCode] = useState<string>(defaultCode);
   const [selectedVersion, setSelectedVersion] = useState<'A' | 'B' | 'C' | 'AI'>('AI');
   const [isVerifying, setIsVerifying] = useState(false);
@@ -49,12 +53,19 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     if (!allPassed) return;
 
     // Apply merged code into active CRDT text buffer
-    const crdt = new YjsCrdtEngine();
-    const ytext = crdt.getText(activeFilePath);
-    if (ytext.length > 0) {
-      ytext.delete(0, ytext.length);
+    if (crdtEngine && activeFilePath) {
+      const ytext = crdtEngine.getText(activeFilePath);
+      crdtEngine.getDoc().transact(() => {
+        if (ytext.length > 0) ytext.delete(0, ytext.length);
+        ytext.insert(0, proposedCode);
+      }, 'conflict-resolution-applied');
     }
-    ytext.insert(0, proposedCode);
+
+    if (onApplyResolvedCode) {
+      onApplyResolvedCode(proposedCode);
+    }
+
+    const currentHash = crdtEngine ? crdtEngine.computeWorkspaceHash() : 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
     // 1. Record merge in MergeHistoryStore
     const nextMergeNum = MergeHistoryStore.getInstance().getRecords().length + 1;
@@ -67,7 +78,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       conflictStatus: 'RESOLVED',
       verificationStatus: 'PASSED',
       timestamp: new Date().toLocaleTimeString(),
-      stateHash: crdt.computeWorkspaceHash(),
+      stateHash: currentHash,
     });
 
     // 2. Record operation in OperationLogStore
@@ -102,13 +113,16 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       <div className="grid grid-cols-3 gap-4">
         {/* Version A */}
         <div
-          onClick={() => setSelectedVersion('A')}
+          onClick={() => {
+            setSelectedVersion('A');
+            setProposedCode('return pass.length() > 8;');
+          }}
           className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-colors ${
             selectedVersion === 'A' ? 'border-peer-arjun bg-peer-arjun/5' : 'border-border-subtle hover:border-gray-600'
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-arjun">Version A (Peer 1)</span>
+            <span className="font-semibold text-peer-arjun">Version A (Laptop A)</span>
             <span className="text-[10px] text-gray-500 font-mono">Length Check</span>
           </div>
           <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
@@ -118,13 +132,16 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
 
         {/* Version B */}
         <div
-          onClick={() => setSelectedVersion('B')}
+          onClick={() => {
+            setSelectedVersion('B');
+            setProposedCode('return pass.matches(".*\\\\d.*");');
+          }}
           className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-colors ${
             selectedVersion === 'B' ? 'border-peer-rahul bg-peer-rahul/5' : 'border-border-subtle hover:border-gray-600'
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-rahul">Version B (Peer 2)</span>
+            <span className="font-semibold text-peer-rahul">Version B (Laptop B)</span>
             <span className="text-[10px] text-gray-500 font-mono">Regex Digit</span>
           </div>
           <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
@@ -134,13 +151,16 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
 
         {/* Version C */}
         <div
-          onClick={() => setSelectedVersion('C')}
+          onClick={() => {
+            setSelectedVersion('C');
+            setProposedCode('return pass.length() >= 12;');
+          }}
           className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-colors ${
             selectedVersion === 'C' ? 'border-peer-mohammed bg-peer-mohammed/5' : 'border-border-subtle hover:border-gray-600'
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-mohammed">Version C (Peer 3)</span>
+            <span className="font-semibold text-peer-mohammed">Version C (Laptop C Reconnected)</span>
             <span className="text-[10px] text-gray-500 font-mono">Strict 12+</span>
           </div>
           <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
@@ -169,13 +189,11 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           </span>
         </div>
 
-        <pre className="text-[12px] font-mono bg-bg-darkest p-3 rounded text-gray-200 border border-border-subtle leading-relaxed">
-          {`public boolean validatePassword(String pass) {
-    if (pass == null) return false;
-    // Groq Merged: Length check (>8) combined with digit requirement
-    return pass.length() >= 8 && pass.matches(".*\\\\d.*");
-}`}
-        </pre>
+        <textarea
+          value={proposedCode}
+          onChange={(e) => setProposedCode(e.target.value)}
+          className="text-[12px] font-mono bg-bg-darkest p-3 rounded text-gray-200 border border-border-subtle leading-relaxed h-32 w-full outline-none focus:border-accent-mint resize-none"
+        />
 
         {/* Verification Pipeline Stages */}
         <div className="flex items-center justify-between bg-bg-panel p-2.5 rounded border border-border-subtle text-xs">

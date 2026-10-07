@@ -13,7 +13,7 @@ describe('RoomPeerStore', () => {
     store.setRoomId('DB-72A91');
     store.setRoomPeers([
       {
-        id: 'peer-local-you',
+        id: store.getLocalPeerId(),
         displayName: 'You (Local Host)',
         role: 'Host',
         status: 'connected',

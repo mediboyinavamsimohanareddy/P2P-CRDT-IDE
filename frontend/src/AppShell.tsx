@@ -72,9 +72,25 @@ export const AppShell: React.FC = () => {
             {activeView === 'network' ? (
               <NetworkAndSyncView />
             ) : activeView === 'conflict' ? (
-              <ConflictResolutionView />
+              <ConflictResolutionView
+                activeFilePath={activeTab?.filePath}
+                activeCode={activeTab?.content}
+                onApplyResolvedCode={(resolvedCode) => {
+                  if (activeTab) {
+                    updateTabContent(activeTab.id, resolvedCode);
+                  }
+                }}
+              />
             ) : activeView === 'security' ? (
-              <SecurityMonitorView />
+              <SecurityMonitorView
+                activeFilePath={activeTab?.filePath}
+                activeCode={activeTab?.content}
+                onApplyFix={(fixedCode) => {
+                  if (activeTab) {
+                    updateTabContent(activeTab.id, fixedCode);
+                  }
+                }}
+              />
             ) : activeView === 'source-control' ? (
               <SourceControlView />
             ) : activeView === 'health' ? (

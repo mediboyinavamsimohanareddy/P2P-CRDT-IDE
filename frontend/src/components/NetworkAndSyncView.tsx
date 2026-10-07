@@ -152,7 +152,7 @@ export const NetworkAndSyncView: React.FC = () => {
                   <span className="font-semibold text-gray-200">{p.displayName}</span>
                 </div>
                 <span className="text-[11px] font-mono text-status-pass">
-                  {p.role === 'Host' ? 'Primary Replica' : 'WebRTC DataChannel · 18 ms'}
+                  {p.role === 'Host' ? 'Primary Replica' : `${p.activity || 'P2P DataChannel'} · 18 ms`}
                 </span>
               </div>
             ))}

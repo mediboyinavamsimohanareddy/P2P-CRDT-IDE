@@ -65,11 +65,27 @@ export class TransportManager {
       const peerSet = this.connectedPeersByTransport.get(transport.id)!;
       if (state === 'connected') {
         peerSet.add(peerId);
+        // Add to RoomPeerStore dynamic live peers list
+        const store = this.getRoomPeerStore();
+        if (store && store.addPeer) {
+          store.addPeer({
+            id: peerId,
+            displayName: `Peer (${peerId.length > 8 ? peerId.substring(0, 6) : peerId})`,
+            role: 'Peer',
+            status: 'connected',
+            activity: `Connected via ${transport.id.toUpperCase()}`,
+            color: transport.id === 'lan' ? '#36B37E' : transport.id === 'bluetooth' ? '#FFAB00' : '#4D96FF',
+          });
+        }
         // Initiate Handshake
         this.sendHandshake(peerId, transport.id, 'HANDSHAKE_HELLO');
       } else if (state === 'offline') {
         peerSet.delete(peerId);
         this.knownPeers.delete(peerId);
+        const store = this.getRoomPeerStore();
+        if (store && store.removePeer) {
+          store.removePeer(peerId);
+        }
       }
 
       this.peerStateListeners.forEach((cb) => cb(peerId, state));
@@ -205,13 +221,20 @@ export class TransportManager {
     return header === '{"type":"HAN';
   }
 
+  private getRoomPeerStore() {
+    if (typeof window !== 'undefined') {
+      return (window as any).__roomPeerStore || null;
+    }
+    return null;
+  }
+
   private sendHandshake(peerId: string, transportType: TransportType, type: 'HANDSHAKE_HELLO' | 'HANDSHAKE_ACK'): void {
     const transport = this.transports.get(transportType);
     if (!transport) return;
 
     const payload: PeerHandshakeMessage = {
       type,
-      peerId: 'local-peer',
+      peerId: this.getRoomPeerStore()?.getLocalPeerId() || 'local-peer',
       workspaceId: this.currentWorkspaceId,
       protocolVersion: this.protocolVersion,
       capabilities: ['crdt-yjs', 'lan-discovery'],

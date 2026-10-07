@@ -47,9 +47,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           DecentraIDE
         </div>
 
-        {/* Menu Bar Dropdowns */}
         <div className="flex gap-1 text-gray-400 font-sans relative">
-          {/* File Menu */}
+          
           <div className="relative">
             <button
               onClick={() => toggleMenu('file')}
@@ -96,7 +95,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             )}
           </div>
 
-          {/* Edit Menu */}
           <div className="relative">
             <button
               onClick={() => toggleMenu('edit')}
@@ -118,7 +116,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             )}
           </div>
 
-          {/* View Menu */}
           <div className="relative">
             <button
               onClick={() => toggleMenu('view')}
@@ -166,7 +163,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         </div>
       </div>
 
-      {/* Search / Command Palette Bar */}
       <div
         onClick={() => setShowCommandPalette(true)}
         className="flex items-center bg-bg-panel border border-border-subtle rounded px-2.5 py-0.5 text-gray-400 w-80 gap-2 cursor-pointer hover:border-gray-600 transition-colors"
@@ -176,7 +172,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         <kbd className="ml-auto bg-bg-dark border border-border-subtle text-[10px] px-1 rounded text-gray-400">⌘K</kbd>
       </div>
 
-      {/* Dynamic Peer Count Connection & Status Indicators */}
       <div className="flex items-center gap-3 font-sans">
         <div className="flex items-center gap-1.5 text-status-pass bg-bg-panel border border-border-subtle px-2 py-0.5 rounded-full text-[11px]">
           <Radio className="w-3 h-3 text-status-pass animate-pulse" />
@@ -195,7 +190,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         </div>
       </div>
 
-      {/* Command Palette Modal */}
       {showCommandPalette && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center pt-20 z-50">
           <div className="bg-bg-panel border border-border-subtle rounded-lg w-[500px] shadow-2xl overflow-hidden flex flex-col">

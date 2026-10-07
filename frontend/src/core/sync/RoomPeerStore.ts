@@ -19,6 +19,9 @@ export class RoomPeerStore {
   public static getInstance(): RoomPeerStore {
     if (!RoomPeerStore.instance) {
       RoomPeerStore.instance = new RoomPeerStore();
+      if (typeof window !== 'undefined') {
+        (window as any).__roomPeerStore = RoomPeerStore.instance;
+      }
     }
     return RoomPeerStore.instance;
   }
@@ -49,7 +52,7 @@ export class RoomPeerStore {
         if (state === 'connected' || state === 'connecting') {
           this.addPeer({
             id: peerId,
-            displayName: `Peer (${peerId.substring(0, 6)})`,
+            displayName: `Peer (${peerId.length > 8 ? peerId.substring(0, 6) : peerId})`,
             role: 'Peer',
             status: state === 'connected' ? 'connected' : 'connecting',
             activity: state === 'connected' ? 'Active in session' : 'Connecting...',
@@ -72,7 +75,7 @@ export class RoomPeerStore {
                 if (pId !== this.localPeerId) {
                   this.addPeer({
                     id: pId,
-                    displayName: `Peer (${pId.length > 8 ? pId.substring(5, 11) : pId})`,
+                    displayName: `Peer (${pId.length > 8 ? pId.substring(0, 6) : pId})`,
                     role: 'Peer',
                     status: 'connected',
                     activity: 'Connected in room',
@@ -127,7 +130,9 @@ export class RoomPeerStore {
 
   // Set connected room peers
   setRoomPeers(connectedPeers: ConnectedPeer[]): void {
-    this.peers = connectedPeers.filter((p) => p.status === 'connected');
+    const local = this.peers.find((p) => p.id === this.localPeerId);
+    const remotePeers = connectedPeers.filter((p) => p.status === 'connected' && p.id !== this.localPeerId);
+    this.peers = local ? [local, ...remotePeers] : connectedPeers.filter((p) => p.status === 'connected');
     this.notify();
   }
 
