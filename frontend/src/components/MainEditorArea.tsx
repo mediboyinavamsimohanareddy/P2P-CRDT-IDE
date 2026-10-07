@@ -23,6 +23,7 @@ export const MainEditorArea: React.FC<MainEditorAreaProps> = ({
   onCloseTab,
   onContentChange,
   onOpenSecurityDashboard,
+  onEditorMount,
 }) => {
   const monacoRef = useRef<any>(null);
   const editorRef = useRef<any>(null);

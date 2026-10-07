@@ -44,41 +44,59 @@ export function useEditorTabs() {
   // Auto-open Main.java on initial load
   useEffect(() => {
     openFile('Main.java');
-  }, []);
+  }, [openFile]);
 
   const openFile = useCallback(async (filePath: string) => {
-    // Check if already open
-    const existing = tabs.find((t) => t.filePath === filePath);
-    if (existing) {
-      setActiveTabId(existing.id);
-      return;
-    }
+    let targetTabId = filePath;
 
-    let content = '';
-    const existingYText = CollaborationManager.getInstance().getCrdtEngine().getText(filePath).toString();
-    if (existingYText) {
-      content = existingYText;
-    } else if (window.electronAPI) {
+    setTabs((prev) => {
+      // Check if already open inside setTabs functional update to avoid stale closure state
+      const existing = prev.find((t) => t.filePath === filePath);
+      if (existing) {
+        targetTabId = existing.id;
+        return prev;
+      }
+
+      let content = '';
+      const existingYText = CollaborationManager.getInstance().getCrdtEngine().getText(filePath).toString();
+      if (existingYText) {
+        content = existingYText;
+      } else if (window.electronAPI) {
+        // Asynchronously load content later if needed, but initialize synchronously or fetch
+        content = '';
+      } else {
+        content = `// Mock content for ${filePath}`;
+      }
+
+      const fileName = filePath.split(/[/\\]/).pop() || filePath;
+      const newTab: EditorTab = {
+        id: filePath,
+        filePath,
+        fileName,
+        content,
+        originalContent: content,
+        isDirty: false,
+        language: getLanguageFromPath(filePath),
+      };
+
+      return [...prev, newTab];
+    });
+
+    if (window.electronAPI) {
       const fileContent = await window.electronAPI.fs.readFile(filePath);
-      content = fileContent ?? '';
-    } else {
-      content = `// Mock content for ${filePath}`;
+      if (fileContent !== null && fileContent !== undefined) {
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === filePath && tab.content === ''
+              ? { ...tab, content: fileContent, originalContent: fileContent }
+              : tab
+          )
+        );
+      }
     }
 
-    const fileName = filePath.split(/[/\\]/).pop() || filePath;
-    const newTab: EditorTab = {
-      id: filePath,
-      filePath,
-      fileName,
-      content,
-      originalContent: content,
-      isDirty: false,
-      language: getLanguageFromPath(filePath),
-    };
-
-    setTabs((prev) => [...prev, newTab]);
-    setActiveTabId(newTab.id);
-  }, [tabs]);
+    setActiveTabId(targetTabId);
+  }, []);
 
   const closeTab = useCallback((tabId: string) => {
     setTabs((prev) => {
