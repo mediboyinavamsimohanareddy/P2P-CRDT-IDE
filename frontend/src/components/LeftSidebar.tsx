@@ -54,21 +54,26 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
   };
 
   const handleCreateRoom = async () => {
+    let newRoomId = 'DB-72A91';
     try {
-      const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      const res = await fetch(`http://${host}:8082/api/rooms/create`, {
+      const res = await fetch('/api/rooms/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'DecentraBank', peerId: 'peer-arjun-01' }),
       });
       const data = await res.json();
       if (data.success && data.roomId) {
-        RoomPeerStore.getInstance().setRoomId(data.roomId);
-      } else {
-        RoomPeerStore.getInstance().setRoomId('DB-72A91');
+        newRoomId = data.roomId;
       }
     } catch {
-      RoomPeerStore.getInstance().setRoomId('DB-72A91');
+      // Fallback
+    }
+
+    RoomPeerStore.getInstance().setRoomId(newRoomId);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(`decentraide://join/${newRoomId}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 

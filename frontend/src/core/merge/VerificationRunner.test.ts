@@ -27,6 +27,12 @@ describe('VerificationRunner', () => {
     const runner = new VerificationRunner();
     const passed = await runner.runVerification('public class Test {}');
 
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/verify/code',
+      expect.objectContaining({
+        method: 'POST',
+      })
+    );
     expect(passed).toBe(true);
     const stages = runner.getStages();
     expect(stages.every((s) => s.status === 'passed')).toBe(true);

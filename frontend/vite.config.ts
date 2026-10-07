@@ -7,6 +7,14 @@ export default defineConfig(({ mode }) => {
   const isElectron = process.env.ELECTRON === 'true';
 
   return {
+    server: {
+      proxy: {
+        '/api': {
+          target: 'http://localhost:8082',
+          changeOrigin: true,
+        },
+      },
+    },
     plugins: [
       react(),
       ...(isElectron

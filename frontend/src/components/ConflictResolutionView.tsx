@@ -207,6 +207,14 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
 
           <div className="flex gap-2">
             <button
+              onClick={handleRunVerification}
+              disabled={isVerifying}
+              className="bg-status-info hover:bg-status-info/80 text-white font-semibold px-3 py-1 rounded text-xs flex items-center gap-1.5 shadow disabled:opacity-40"
+            >
+              {isVerifying ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+              <span>{isVerifying ? 'Running Gates...' : 'Run Verification Gates'}</span>
+            </button>
+            <button
               onClick={handleAcceptMerge}
               disabled={!allPassed || isStaged}
               className="bg-accent-mint hover:bg-accent-mintHover text-bg-darkest font-semibold px-3 py-1 rounded text-xs flex items-center gap-1 disabled:opacity-40"

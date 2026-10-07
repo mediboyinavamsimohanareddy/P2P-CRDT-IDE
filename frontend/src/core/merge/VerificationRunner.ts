@@ -83,7 +83,7 @@ export class VerificationRunner {
     updateStage(5, 'running');
 
     try {
-      const response = await fetch('http://localhost:8082/api/verify/code', {
+      const response = await fetch('/api/verify/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

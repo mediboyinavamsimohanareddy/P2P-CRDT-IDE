@@ -11,7 +11,7 @@ export const ProjectBar: React.FC = () => {
 
     try {
       if (lang === 'java') {
-        const res = await fetch('http://localhost:8082/api/verify/code', {
+        const res = await fetch('/api/verify/code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

@@ -41,7 +41,7 @@ export class RoomPeerStore {
     this.roomId = roomId;
 
     // Automatically create WebRTC Transport instance for real P2P peer discovery if in browser environment
-    if (typeof window !== 'undefined' && typeof WebSocket !== 'undefined') {
+    if (typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined' && process.env.NODE_ENV !== 'test') {
       const transport = new WebRtcTransport(this.localPeerId, roomId);
       transport.onPeerState((peerId, state) => {
         if (state === 'connected') {
@@ -65,6 +65,10 @@ export class RoomPeerStore {
 
   getRoomId(): string | null {
     return this.roomId;
+  }
+
+  getLocalPeerId(): string {
+    return this.localPeerId;
   }
 
   addPeer(peer: ConnectedPeer): void {

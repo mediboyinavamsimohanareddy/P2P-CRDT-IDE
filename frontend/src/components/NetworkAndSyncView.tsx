@@ -21,21 +21,26 @@ export const NetworkAndSyncView: React.FC = () => {
   }, []);
 
   const handleCreateRoom = async () => {
+    let newRoomId = 'DB-' + Math.random().toString(36).substring(2, 7).toUpperCase();
     try {
-      const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      const res = await fetch(`http://${host}:8082/api/rooms/create`, {
+      const res = await fetch('/api/rooms/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'DecentraWorkspace', peerId: RoomPeerStore.getInstance().getLocalPeerId() }),
       });
       const data = await res.json();
       if (data.success && data.roomId) {
-        RoomPeerStore.getInstance().setRoomId(data.roomId);
-      } else {
-        RoomPeerStore.getInstance().setRoomId('DB-' + Math.random().toString(36).substring(2, 7).toUpperCase());
+        newRoomId = data.roomId;
       }
     } catch {
-      RoomPeerStore.getInstance().setRoomId('DB-' + Math.random().toString(36).substring(2, 7).toUpperCase());
+      // Fallback to offline room ID
+    }
+
+    RoomPeerStore.getInstance().setRoomId(newRoomId);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(`decentraide://join/${newRoomId}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
