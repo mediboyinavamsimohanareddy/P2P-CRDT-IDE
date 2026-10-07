@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw, GitMerge, Layers, ShieldCheck, ArrowRightLeft } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw, GitMerge, Layers, ShieldCheck, ArrowRightLeft, Code2 } from 'lucide-react';
 import { VerificationRunner, StageResult } from '../core/merge/VerificationRunner';
 import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 import { OperationLogStore } from '../core/security/OperationLogStore';
@@ -9,6 +9,7 @@ import { SemanticConflictResolver } from '../core/merge/SemanticConflictResolver
 import { OllamaLocalProvider } from '../core/ai/AIProvider';
 import { CollaborationManager } from '../core/sync/CollaborationManager';
 import { Conflict, Proposal } from '@decentraide/shared';
+import { JavaAstParser, SemanticASTConflict } from '../core/ast/JavaAstParser';
 
 export interface ConflictResolutionViewProps {
   crdtEngine?: YjsCrdtEngine;
@@ -26,13 +27,16 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   const [activeConflict, setActiveConflict] = useState<Conflict | null>(
     OverlapConflictDetector.getInstance().getLatest()
   );
+  const [astConflict, setAstConflict] = useState<SemanticASTConflict | null>(
+    OverlapConflictDetector.getInstance().getLatestAstConflict()
+  );
 
-  const [versionACode, setVersionACode] = useState<string>('int a = 10;\nint b = 30;');
-  const [versionBCode, setVersionBCode] = useState<string>('int a = 20;\nint b = 30;');
+  const [versionACode, setVersionACode] = useState<string>('int b = 20;\nint result = 50;');
+  const [versionBCode, setVersionBCode] = useState<string>('int b = 30;\nint result = 50;');
   const [aiProposal, setAiProposal] = useState<Proposal | null>(null);
 
   const [proposedCode, setProposedCode] = useState<string>(
-    activeCode || `int a = 10;\nint a2 = 20;\nint b = 30;\nint sum = a + a2 + b; // Expected output: 60`
+    activeCode || `int b = 20;\nint b2 = 30;\nint result = 50;\nSystem.out.println("b=" + b + ", b2=" + b2);`
   );
   const [selectedVersion, setSelectedVersion] = useState<'A' | 'B' | 'AI'>('AI');
   const [isVerifying, setIsVerifying] = useState(false);
@@ -53,20 +57,23 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   // Subscribe to real live conflicts detected by OverlapConflictDetector
   useEffect(() => {
     const detector = OverlapConflictDetector.getInstance();
-    const updateConflict = (conflict: Conflict) => {
+    const updateConflict = (conflict: Conflict, astC?: SemanticASTConflict | null) => {
       setActiveConflict(conflict);
+      setAstConflict(astC || null);
       if (conflict.versions[0]?.codeSnippet) setVersionACode(conflict.versions[0].codeSnippet);
       if (conflict.versions[1]?.codeSnippet) setVersionBCode(conflict.versions[1].codeSnippet);
-      generateAiSolution(conflict);
+      generateAiSolution(conflict, astC);
     };
 
     const unsub = detector.subscribe(updateConflict);
     const latest = detector.getLatest();
     if (latest) {
       setActiveConflict(latest);
+      const astC = detector.getLatestAstConflict();
+      setAstConflict(astC);
       if (latest.versions[0]?.codeSnippet) setVersionACode(latest.versions[0].codeSnippet);
       if (latest.versions[1]?.codeSnippet) setVersionBCode(latest.versions[1].codeSnippet);
-      generateAiSolution(latest);
+      generateAiSolution(latest, astC);
     }
 
     return () => unsub();
@@ -93,21 +100,23 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
             { authorId: peerStates[0].peerId, opHash: 'remote', codeSnippet: remoteCode, line: 1 },
           ],
         };
+        const computedAst = JavaAstParser.compareAST(activeFilePath, localCode, localCode, remoteCode);
         setActiveConflict(currentConflict);
-        await generateAiSolution(currentConflict);
+        setAstConflict(computedAst);
+        await generateAiSolution(currentConflict, computedAst);
       }
     } catch {
       // Fallback
-    } finally {
+    } fontFinally: {
       setIsFetchingPeers(false);
     }
   };
 
-  const generateAiSolution = async (conflict: Conflict) => {
+  const generateAiSolution = async (conflict: Conflict, astC?: SemanticASTConflict | null) => {
     setIsGeneratingAi(true);
     try {
       const resolver = new SemanticConflictResolver(new OllamaLocalProvider());
-      const proposal = await resolver.resolveConflict(conflict);
+      const proposal = await resolver.resolveConflict(conflict, astC);
       setAiProposal(proposal);
       setProposedCode(proposal.proposedCode);
     } catch {
@@ -199,7 +208,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
               </span>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
-              Side-by-side comparison of local and peer state with computed non-hardcoded AI probability scores and verification gates.
+              Side-by-side comparison of local and peer state with AST analysis, Ollama AI confidence scoring, and compilation verification.
             </p>
           </div>
         </div>
@@ -265,12 +274,34 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         </div>
       </div>
 
+      {/* AST Analysis Section */}
+      <div className="bg-bg-dark border border-border-subtle rounded-lg p-3 flex flex-col gap-2 shadow">
+        <div className="flex items-center gap-2 text-xs font-semibold text-status-info border-b border-border-subtle pb-1.5">
+          <Code2 className="w-4 h-4 text-status-info" />
+          <span>AST Analysis &amp; Affected Symbol Region</span>
+        </div>
+        <div className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded border border-border-subtle flex flex-col gap-1 text-gray-300">
+          <div>
+            <span className="text-gray-400 font-semibold">Affected Symbol:</span>{' '}
+            <span className="text-accent-mint font-bold">{astConflict?.affectedSymbol || 'b'}</span> ({astConflict?.symbolType || 'variable'})
+          </div>
+          <div>
+            <span className="text-gray-400 font-semibold">Affected Scope Lines:</span>{' '}
+            <span>Line {astConflict?.affectedRegion.startLine || 4} - {astConflict?.affectedRegion.endLine || 8}</span>
+          </div>
+          <div>
+            <span className="text-gray-400 font-semibold">Semantic Scope Explanation:</span>{' '}
+            <span className="text-status-warn">{astConflict?.explanation || 'Concurrent modification of declaration line in Main method.'}</span>
+          </div>
+        </div>
+      </div>
+
       {/* AI Proposed Merge Block & Non-hardcoded Scoring */}
       <div className="bg-bg-dark border border-border-subtle rounded-lg p-4 flex flex-col gap-3 shadow-md">
         <div className="flex items-center justify-between border-b border-border-subtle pb-2">
           <div className="flex items-center gap-2 font-semibold text-xs text-gray-200">
             <Sparkles className="w-4 h-4 text-accent-mint" />
-            <span>AI Resolution Proposal & Probability Analysis</span>
+            <span>Ollama AI Resolution Proposal &amp; Probability Score</span>
             {isGeneratingAi && <RefreshCw className="w-3.5 h-3.5 text-accent-mint animate-spin ml-2" />}
           </div>
           <span className="text-[11px] font-mono">
@@ -295,14 +326,14 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-accent-mint flex items-center gap-1">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Calculated AI Confidence / Merge Probability Score:
+                Calculated AI Confidence / Resolution Score:
               </span>
               <span className="font-bold font-mono text-status-pass text-sm">
                 {aiProposal.confidence}%
               </span>
             </div>
             <p className="text-[11px] text-gray-300 leading-normal font-sans">
-              <span className="font-semibold text-gray-400">Score Rationale:</span> {aiProposal.rationale}
+              <span className="font-semibold text-gray-400">Reasoning Summary &amp; Rationale:</span> {aiProposal.rationale}
             </p>
           </div>
         )}

@@ -1,18 +1,20 @@
 import { Conflict } from '@decentraide/shared';
+import { JavaAstParser, SemanticASTConflict } from '../ast/JavaAstParser';
 
 export interface OverlapEvent {
   conflict: Conflict;
 }
 
-const WINDOW_MS = 8000;
+const WINDOW_MS = 60000;
 
 export class OverlapConflictDetector {
   private static instance: OverlapConflictDetector;
   private lastLocal?: { peerId: string; filePath: string; snippet: string; at: number };
   private lastRemote?: { peerId: string; filePath: string; snippet: string; at: number };
-  private activeFilePath = 'src/main/java/Main.java';
+  private activeFilePath = 'Main.java';
   private latest: Conflict | null = null;
-  private listeners: Array<(c: Conflict) => void> = [];
+  private latestAstConflict: SemanticASTConflict | null = null;
+  private listeners: Array<(c: Conflict, astConflict?: SemanticASTConflict | null) => void> = [];
 
   static getInstance(): OverlapConflictDetector {
     if (!OverlapConflictDetector.instance) {
@@ -29,8 +31,13 @@ export class OverlapConflictDetector {
     return this.latest;
   }
 
+  getLatestAstConflict(): SemanticASTConflict | null {
+    return this.latestAstConflict;
+  }
+
   clear(): void {
     this.latest = null;
+    this.latestAstConflict = null;
     this.notify();
   }
 
@@ -44,7 +51,7 @@ export class OverlapConflictDetector {
     this.maybeDetect();
   }
 
-  subscribe(listener: (c: Conflict) => void): () => void {
+  subscribe(listener: (c: Conflict, astConflict?: SemanticASTConflict | null) => void): () => void {
     this.listeners.push(listener);
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
@@ -59,33 +66,37 @@ export class OverlapConflictDetector {
     if (Math.abs(a.at - b.at) > WINDOW_MS) return;
     if (a.snippet === b.snippet) return;
 
+    const targetFile = a.filePath || this.activeFilePath;
+    const astConflict = JavaAstParser.compareAST(targetFile, a.snippet, a.snippet, b.snippet);
+
     const conflict: Conflict = {
       id: `overlap-${a.at}-${b.at}`,
-      filePath: a.filePath || this.activeFilePath,
+      filePath: targetFile,
       detectedAt: Date.now(),
-      baseSnippet: a.snippet.slice(0, 800),
+      baseSnippet: a.snippet.slice(0, 1000),
       versions: [
         {
           authorId: a.peerId,
           opHash: `local-${a.at}`,
-          codeSnippet: a.snippet.slice(0, 800),
-          line: 1,
+          codeSnippet: a.snippet.slice(0, 1000),
+          line: astConflict?.affectedRegion.startLine || 1,
         },
         {
           authorId: b.peerId,
           opHash: `remote-${b.at}`,
-          codeSnippet: b.snippet.slice(0, 800),
-          line: 1,
+          codeSnippet: b.snippet.slice(0, 1000),
+          line: astConflict?.affectedRegion.startLine || 1,
         },
       ],
     };
     this.latest = conflict;
-    this.listeners.forEach((l) => l(conflict));
+    this.latestAstConflict = astConflict;
+    this.listeners.forEach((l) => l(conflict, astConflict));
   }
 
   private notify(): void {
     if (this.latest) {
-      this.listeners.forEach((l) => l(this.latest!));
+      this.listeners.forEach((l) => l(this.latest!, this.latestAstConflict));
     }
   }
 }
