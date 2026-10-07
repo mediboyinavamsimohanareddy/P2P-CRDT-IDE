@@ -115,6 +115,7 @@ export const AppShell: React.FC = () => {
       <ProjectBar
         activeFilePath={activeTab?.filePath}
         onOpenSecurityDashboard={() => setActiveView('security')}
+        onOpenConflictView={() => setActiveView('conflict')}
       />
 
       <div className="flex flex-1 overflow-hidden">

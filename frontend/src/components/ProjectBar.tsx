@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
-import { GitBranch, RefreshCw, CheckCircle2, Play, Lock, ShieldAlert, X } from 'lucide-react';
+import { GitBranch, RefreshCw, CheckCircle2, Play, Lock, ShieldAlert, X, GitMerge } from 'lucide-react';
 import { HackingSafetyStore } from '../core/security/HackingSafetyStore';
 
 interface ProjectBarProps {
   activeFilePath?: string;
   onOpenSecurityDashboard?: () => void;
+  onOpenConflictView?: () => void;
 }
 
 export const ProjectBar: React.FC<ProjectBarProps> = ({
   activeFilePath = 'src/App.java',
   onOpenSecurityDashboard,
+  onOpenConflictView,
 }) => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionOutput, setExecutionOutput] = useState<string | null>(null);
@@ -108,6 +110,15 @@ export const ProjectBar: React.FC<ProjectBarProps> = ({
           <CheckCircle2 className="w-3.5 h-3.5" />
           <span>Project healthy</span>
         </div>
+        {onOpenConflictView && (
+          <button
+            onClick={onOpenConflictView}
+            className="flex items-center gap-1.5 bg-status-warn/20 hover:bg-status-warn/30 text-status-warn border border-status-warn/40 px-2.5 py-1 rounded text-xs font-bold transition-all cursor-pointer shadow"
+          >
+            <GitMerge className="w-3.5 h-3.5 text-status-warn" />
+            <span>Merge &amp; Conflicts</span>
+          </button>
+        )}
         <button className="flex items-center gap-1 bg-accent-mint/10 hover:bg-accent-mint/20 text-accent-mint border border-accent-mint/30 px-2 py-0.5 rounded text-[11px] font-medium transition-colors">
           <RefreshCw className="w-3 h-3" />
           <span>Sync now</span>

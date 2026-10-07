@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Files, GitPullRequest, AlertCircle, History, Shield, Activity, Heart, UserPlus, FolderOpen, File, Folder, FilePlus, FolderPlus, X, Copy, Check, Radio } from 'lucide-react';
+import { Files, GitPullRequest, AlertCircle, History, Shield, Activity, Heart, UserPlus, FolderOpen, File, Folder, FilePlus, FolderPlus, X, Copy, Check, Radio, GitMerge } from 'lucide-react';
 import { useFileSystem } from '../hooks/useFileSystem';
 import { FileEntry } from '../main/preload';
 import { RoomPeerStore, ConnectedPeer } from '../core/sync/RoomPeerStore';
@@ -166,6 +166,21 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
               <span>Source Control</span>
             </div>
             <span className="bg-bg-panel border border-border-subtle text-[10px] px-1.5 rounded-full text-gray-400 font-mono">2</span>
+          </div>
+
+          <div
+            onClick={() => onSelectView?.('conflict')}
+            className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer ${
+              activeView === 'conflict' ? 'bg-bg-hover text-gray-200 font-medium' : 'hover:bg-bg-hover text-gray-400'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <GitMerge className="w-3.5 h-3.5 text-status-warn" />
+              <span>Conflict Resolution</span>
+            </div>
+            <span className="bg-status-warn/20 border border-status-warn/30 text-status-warn text-[10px] px-1.5 rounded-full font-mono font-bold">
+              1
+            </span>
           </div>
 
           <div
