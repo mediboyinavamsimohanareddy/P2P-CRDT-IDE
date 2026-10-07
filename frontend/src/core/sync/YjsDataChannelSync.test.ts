@@ -99,6 +99,7 @@ describe('Yjs DataChannel synchronization', () => {
 
   it('late joiner receives existing project state via syncStep1/step2', async () => {
     host.getCrdtEngine().getText('Main.java').delete(0, host.getCrdtEngine().getText('Main.java').length);
+    joiner.getCrdtEngine().getText('Main.java').delete(0, joiner.getCrdtEngine().getText('Main.java').length);
     host.getCrdtEngine().getText('Main.java').insert(0, 'class Host {}');
 
     await connectPair(hostDc, joinerDc);

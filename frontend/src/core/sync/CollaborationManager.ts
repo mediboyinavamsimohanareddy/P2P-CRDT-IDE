@@ -12,8 +12,11 @@ import { LocalPersistenceManager } from '../../services/LocalPersistenceManager'
 import { OperationLogStore } from '../security/OperationLogStore';
 import { Frame } from '@decentraide/shared';
 import { SessionStatusStore } from './SessionStatusStore';
+import { SignalingConfig } from './SignalingConfig';
 import { OverlapConflictDetector } from '../merge/OverlapConflictDetector';
 import { ConvergenceVerifier } from './ConvergenceVerifier';
+import { AutoRejoinManager } from './AutoRejoinManager';
+import { ActiveSessionMetadata } from '../../services/LocalPersistenceManager';
 import { Transport } from '../transport/Transport';
 import { HackingSafetyStore } from '../security/HackingSafetyStore';
 import { CodeSafetyAnalyzer } from '../security/CodeSafetyAnalyzer';
@@ -131,6 +134,10 @@ export class CollaborationManager {
     this.transportManager = options?.transportManager ?? new TransportManager('default-workspace');
     this.setupTransportListeners();
     this.setupCrdtListeners();
+
+    AutoRejoinManager.getInstance().setTriggerRejoinHandler(async (session) => {
+      await this.resumeActiveSession(session.roomId);
+    });
 
     // Populate initial default Main.java Java template in CRDT engine if empty
     if (this.crdtEngine.getText('Main.java').length === 0) {
@@ -254,6 +261,34 @@ export class CollaborationManager {
     return { allowed: true };
   }
 
+  /**
+   * Resumes active session on network recovery without resetting Y.Doc
+   */
+  public async resumeActiveSession(targetRoomId?: string): Promise<void> {
+    const savedMeta = await this.persistenceManager.getActiveSession();
+    const roomIdToResume = targetRoomId || savedMeta?.roomId || this.currentRoomId;
+    if (!roomIdToResume) return;
+
+    if (!this.isHost && savedMeta?.signalingHost) {
+      SignalingConfig.getInstance().setHost(savedMeta.signalingHost);
+      try {
+        await joinRoom(roomIdToResume, this.peerStore.getLocalPeerId());
+      } catch {
+        // Best effort signaling check
+      }
+    }
+
+    if (this.webrtcTransport) {
+      await this.webrtcTransport.stop();
+      this.connectedPeers.clear();
+      this.syncStep1Sent.clear();
+    }
+
+    // Re-start session logic using existing connection flows
+    await this.startSession(roomIdToResume, { isHost: this.isHost });
+    AutoRejoinManager.getInstance().resetRetryCount();
+  }
+
   public async startSession(
     roomId: string,
     options?: { isHost?: boolean; skipDefaultTransports?: boolean }
@@ -279,6 +314,20 @@ export class CollaborationManager {
     if (this.isHost) {
       this.securityPipeline.setProjectKey(this.projectKey);
     }
+
+    // Persist active session metadata for session resume / auto-rejoin
+    const activeSessionMeta: ActiveSessionMetadata = {
+      roomId,
+      isHost: this.isHost,
+      signalingHost: SignalingConfig.getInstance().getHost() || undefined,
+      peerId: this.identity.peerId,
+      publicKeyPem: this.identity.publicKeyPem,
+      privateKeyPem: this.identity.privateKeyPem,
+      projectKeyB64: SecurityManager.keyToBase64(this.projectKey),
+      activeFilePath: this.activeFilePath,
+      savedAt: Date.now(),
+    };
+    this.persistenceManager.saveActiveSession(activeSessionMeta).catch(() => {});
 
     SessionStatusStore.getInstance().patch({
       phase: 'signaling',
@@ -386,6 +435,7 @@ export class CollaborationManager {
         SessionStatusStore.getInstance().patch({ phase: 'connecting', converged: false });
       }
       if (state === 'connected') {
+        AutoRejoinManager.getInstance().resetRetryCount();
         this.connectedPeers.add(peerId);
         this.syncStep1Sent.delete(peerId);
         const phase = this.transportManager.getActiveTransportType() === 'lan' ? 'lan-relay' : 'connected';
@@ -399,10 +449,16 @@ export class CollaborationManager {
       if (state === 'offline') {
         this.connectedPeers.delete(peerId);
         this.syncStep1Sent.delete(peerId);
-        SessionStatusStore.getInstance().patch({
-          converged: false,
-          phase: this.connectedPeers.size === 0 ? 'local' : SessionStatusStore.getInstance().get().phase,
-        });
+        
+        const remainingPeers = this.connectedPeers.size;
+        if (remainingPeers === 0) {
+          AutoRejoinManager.getInstance().handleNetworkLoss();
+        } else {
+          SessionStatusStore.getInstance().patch({
+            converged: false,
+            phase: 'connected',
+          });
+        }
       }
     });
 

@@ -223,12 +223,24 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
             </span>
             <span
               className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                sessionStatus.converged
+                sessionStatus.phase === 'disconnected'
+                  ? 'bg-status-error/20 text-status-error'
+                  : sessionStatus.phase === 'reconnecting' || sessionStatus.phase === 'rejoining'
+                  ? 'bg-status-warn/20 text-status-warn animate-pulse'
+                  : sessionStatus.converged
                   ? 'bg-status-pass/20 text-status-pass'
                   : 'bg-status-warn/20 text-status-warn'
               }`}
             >
-              {sessionStatus.converged ? 'CRDT: SYNCED' : 'CRDT: SYNCING'}
+              {sessionStatus.phase === 'disconnected'
+                ? 'DISCONNECTED'
+                : sessionStatus.phase === 'reconnecting'
+                ? 'RECONNECTING'
+                : sessionStatus.phase === 'rejoining'
+                ? 'REJOINING'
+                : sessionStatus.converged
+                ? 'CRDT: SYNCED'
+                : 'CRDT: SYNCING'}
             </span>
           </div>
 

@@ -6,7 +6,12 @@ export type SessionPhase =
   | 'verified'
   | 'ice-failed'
   | 'lan-relay'
-  | 'local';
+  | 'local'
+  | 'disconnected'
+  | 'reconnecting'
+  | 'rejoining'
+  | 'synchronizing'
+  | 'synced';
 
 export interface SessionStatus {
   phase: SessionPhase;

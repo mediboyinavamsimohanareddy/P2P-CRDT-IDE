@@ -36,7 +36,15 @@ export const StatusBar: React.FC<StatusBarProps> = ({ transportManager }) => {
   useEffect(() => {
     const apply = () => {
       const s = SessionStatusStore.getInstance().get();
-      setSyncLabel(s.converged ? 'CRDT: SYNCED' : s.phase === 'local' ? 'CRDT: LOCAL' : 'CRDT: SYNCING');
+      let label = 'CRDT: LOCAL';
+      if (s.phase === 'disconnected') label = 'DISCONNECTED (Offline)';
+      else if (s.phase === 'reconnecting') label = 'RECONNECTING...';
+      else if (s.phase === 'rejoining') label = 'REJOINING ROOM...';
+      else if (s.phase === 'synchronizing') label = 'SYNCHRONIZING...';
+      else if (s.converged) label = 'CRDT: SYNCED';
+      else if (s.phase !== 'local') label = 'CRDT: SYNCING';
+
+      setSyncLabel(label);
       if (s.localHash && s.remoteHash && s.localHash === s.remoteHash) {
         setHashLabel('STATE HASH: MATCHED');
       } else if (s.remoteHash) {

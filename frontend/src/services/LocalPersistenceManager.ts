@@ -6,6 +6,19 @@ export interface WorkspaceMetadata {
   roomId?: string;
   lastOpened: number;
   openTabs: string[];
+  sessionInfo?: ActiveSessionMetadata;
+}
+
+export interface ActiveSessionMetadata {
+  roomId: string;
+  isHost: boolean;
+  signalingHost?: string;
+  peerId: string;
+  publicKeyPem: string;
+  privateKeyPem: string;
+  projectKeyB64?: string;
+  activeFilePath?: string;
+  savedAt: number;
 }
 
 let nodeFsPromises: typeof import('fs').promises | null = null;
@@ -147,6 +160,62 @@ export class LocalPersistenceManager {
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  async saveActiveSession(session: ActiveSessionMetadata): Promise<boolean> {
+    if (this.hasLocalStorage()) {
+      window.localStorage.setItem('decentraide:active-session', JSON.stringify(session));
+      return true;
+    }
+    try {
+      await this.init();
+      const fs = getFsPromises();
+      if (fs) {
+        const sessionPath = pathJoin(this.baseDir, 'active-session.json');
+        await fs.writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('Failed to save active session:', e);
+      return false;
+    }
+  }
+
+  async getActiveSession(): Promise<ActiveSessionMetadata | null> {
+    if (this.hasLocalStorage()) {
+      const data = window.localStorage.getItem('decentraide:active-session');
+      return data ? JSON.parse(data) : null;
+    }
+    try {
+      const fs = getFsPromises();
+      if (fs) {
+        const sessionPath = pathJoin(this.baseDir, 'active-session.json');
+        const data = await fs.readFile(sessionPath, 'utf-8');
+        return JSON.parse(data) as ActiveSessionMetadata;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async clearActiveSession(): Promise<boolean> {
+    if (this.hasLocalStorage()) {
+      window.localStorage.removeItem('decentraide:active-session');
+      return true;
+    }
+    try {
+      const fs = getFsPromises();
+      if (fs) {
+        const sessionPath = pathJoin(this.baseDir, 'active-session.json');
+        await fs.unlink(sessionPath);
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
     }
   }
 
