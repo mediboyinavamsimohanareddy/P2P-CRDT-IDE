@@ -7,6 +7,10 @@ export default defineConfig(({ mode }) => {
   const isElectron = process.env.ELECTRON === 'true';
 
   return {
+    define: {
+      'process.env': {},
+      global: 'globalThis',
+    },
     server: {
       proxy: {
         '/api': {

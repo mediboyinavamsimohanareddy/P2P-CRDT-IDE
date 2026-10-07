@@ -5,11 +5,30 @@ import { LanTransport } from '../transport/LanTransport';
 import { WebBluetoothTransport } from '../transport/WebBluetoothTransport';
 import { RoomPeerStore } from './RoomPeerStore';
 import { SecurityPipeline, MembershipList } from '../security/SecurityPipeline';
-import { SecurityManager, CryptoIdentity } from '../security/SecurityManager';
+import { SecurityManager, CryptoIdentity, SymmetricKey } from '../security/SecurityManager';
 import { OpLogManager } from '../crdt/OpLogManager';
 import { LocalPersistenceManager } from '../../services/LocalPersistenceManager';
 import { OperationLogStore } from '../security/OperationLogStore';
 import { Frame } from '@decentraide/shared';
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
 
 export class CollaborationManager {
   private static instance: CollaborationManager;
@@ -21,7 +40,7 @@ export class CollaborationManager {
   private opLogManager: OpLogManager;
   private securityPipeline: SecurityPipeline;
   private identity: CryptoIdentity;
-  private projectKey: Buffer;
+  private projectKey: SymmetricKey;
   private membership: MembershipList;
 
   private isStarted = false;
@@ -168,7 +187,7 @@ export class CollaborationManager {
         if (result.success && result.decryptedPayload) {
           const payloadObj = JSON.parse(result.decryptedPayload);
           if (payloadObj.u) {
-            const updateBytes = new Uint8Array(Buffer.from(payloadObj.u, 'base64'));
+            const updateBytes = base64ToUint8Array(payloadObj.u);
             this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
             OperationLogStore.getInstance().logAppliedOp(peerId, 'UPDATE', this.activeFilePath);
             this.saveSnapshotDebounced();
@@ -199,7 +218,7 @@ export class CollaborationManager {
 
       // Package update into signed frame and broadcast
       const payloadObj = {
-        u: Buffer.from(update).toString('base64'),
+        u: uint8ArrayToBase64(update),
         filePath: this.activeFilePath,
       };
       const payloadStr = JSON.stringify(payloadObj);
@@ -232,7 +251,7 @@ export class CollaborationManager {
     try {
       const stateUpdate = this.crdtEngine.encodeStateAsUpdate();
       const payloadObj = {
-        u: Buffer.from(stateUpdate).toString('base64'),
+        u: uint8ArrayToBase64(stateUpdate),
         filePath: this.activeFilePath,
       };
       const payloadStr = JSON.stringify(payloadObj);

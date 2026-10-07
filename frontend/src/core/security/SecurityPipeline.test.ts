@@ -6,7 +6,7 @@ import { Frame } from '@decentraide/shared';
 describe('SecurityPipeline (threat model defenses)', () => {
   let ownerIdentity: ReturnType<typeof SecurityManager.generateIdentity>;
   let devIdentity: ReturnType<typeof SecurityManager.generateIdentity>;
-  let projectKey: Buffer;
+  let projectKey: ReturnType<typeof SecurityManager.generateSymmetricKey>;
   let membership: MembershipList;
   let pipeline: SecurityPipeline;
 

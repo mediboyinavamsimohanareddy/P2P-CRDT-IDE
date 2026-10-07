@@ -7,6 +7,15 @@ export interface PendingOp {
   timestamp: number;
 }
 
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 export class OpLogManager {
   private engine: CrdtEngine;
   private persistence: LocalPersistenceManager;
@@ -24,7 +33,7 @@ export class OpLogManager {
       timestamp: Date.now(),
     };
     this.pendingQueue.push(op);
-    this.persistence.appendOpLog(op.id, Buffer.from(update).toString('base64'));
+    this.persistence.appendOpLog(op.id, uint8ArrayToBase64(update));
   }
 
   getPendingQueue(): PendingOp[] {

@@ -1,6 +1,6 @@
 import { Frame, SecurityEvent } from '@decentraide/shared';
 import { FrameSchema } from '@decentraide/shared';
-import { SecurityManager } from './SecurityManager';
+import { SecurityManager, SymmetricKey } from './SecurityManager';
 
 export interface MembershipList {
   projectId: string;
@@ -12,12 +12,12 @@ export interface MembershipList {
 export class SecurityPipeline {
   private membership: MembershipList;
   private seenOpIds = new Set<string>();
-  private projectKey: Buffer;
+  private projectKey: SymmetricKey;
   private onSecurityEvent?: (event: SecurityEvent) => void;
 
   constructor(
     membership: MembershipList,
-    projectKey: Buffer,
+    projectKey: SymmetricKey,
     onSecurityEvent?: (event: SecurityEvent) => void
   ) {
     this.membership = membership;
