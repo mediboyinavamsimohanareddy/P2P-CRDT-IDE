@@ -88,7 +88,7 @@
 |------|----------|--------|
 | (init) | CRDT lib = Yjs behind `CrdtEngine` interface | Mature, fast, swappable |
 | (init) | Desktop = Electron + React + TS | Monaco, node-pty, fs access |
-| (init) | Local AI default = Ollama + Qwen2.5-Coder | Privacy, "ON DEVICE" UI |
+| (init) | Local AI default = Ollama + mistral:latest | Privacy, "ON DEVICE" UI |
 | (init) | Crypto = Ed25519 / X25519 / XChaCha20-Poly1305 via libsodium | Standard, audited |
 
 ## Known issues / tech debt

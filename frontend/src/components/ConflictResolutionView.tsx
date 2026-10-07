@@ -18,7 +18,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   activeCode,
   onApplyResolvedCode,
 }) => {
-  const defaultCode = activeCode || `public boolean validatePassword(String pass) {\n    if (pass == null) return false;\n    // Groq Merged: Length check (>=8) combined with digit requirement\n    return pass.length() >= 8 && pass.matches(".*\\\\d.*");\n}`;
+  const defaultCode = activeCode || `public boolean validatePassword(String pass) {\n    if (pass == null) return false;\n    // Ollama Mistral Merged: Length check (>=8) combined with digit requirement\n    return pass.length() >= 8 && pass.matches(".*\\\\d.*");\n}`;
   const [proposedCode, setProposedCode] = useState<string>(defaultCode);
   const [selectedVersion, setSelectedVersion] = useState<'A' | 'B' | 'C' | 'AI'>('AI');
   const [isVerifying, setIsVerifying] = useState(false);
@@ -99,7 +99,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-gray-100">Resolve Semantic Overlap — {activeFilePath}</h1>
               <span className="bg-status-pass/20 text-status-pass text-[10px] px-2 py-0.5 rounded font-mono font-bold">
-                Groq Llama 3.1 8B Instant · 94% confidence
+                Ollama Mistral:latest · 95% confidence
               </span>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
@@ -174,7 +174,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         <div className="flex items-center justify-between border-b border-border-subtle pb-2">
           <div className="flex items-center gap-2 font-semibold text-xs text-gray-200">
             <Sparkles className="w-4 h-4 text-accent-mint" />
-            <span>Groq Llama 3.1 8B Instant Merge Proposal</span>
+            <span>Ollama Mistral:latest Merge Proposal</span>
           </div>
           <span className="text-[11px] font-mono">
             {isStaged ? (

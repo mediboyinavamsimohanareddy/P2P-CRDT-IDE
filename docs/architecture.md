@@ -48,7 +48,7 @@ frontend/
 │   ├── transport/        Transport interface + WebRTC / LAN / Bluetooth(stub) implementations
 │   ├── sync/             Sync manager: queue, offline buffer, reconcile, convergence verify
 │   ├── ast/              Tree-sitter (Java first) parsing, affected-structure detection
-│   ├── ai/               Provider interface (Local Ollama Qwen2.5-Coder default, external opt-in), prompts
+│   ├── ai/               Provider interface (Local Ollama mistral:latest default), prompts
 │   ├── merge/            Conflict detector, AI merge proposal, verification pipeline
 │   ├── fs/               Workspace <-> CRDT binding, file watcher
 │   ├── git/              Git wrapper (status, checkpoint, branch)
@@ -109,7 +109,7 @@ Pipeline on **receive:** verify signature → check membership/role → replay/d
 - **Revocation/quarantine:** owner can revoke a peer; peers can quarantine a peer after repeated invalid ops.
 
 ## 8. AI layer
-- **Provider interface:** `LocalProvider` (Ollama, Qwen2.5-Coder default, "on device"), `ExternalProvider` (opt-in, clearly labeled in UI).
+- **Provider interface:** `OllamaLocalProvider` (Ollama, `mistral:latest` default, "on device").
 - **Copilot:** generate, explain, debug, refactor, write tests. Output is a *proposal* (diff) → user clicks **Apply** → becomes CRDT ops.
 - **Context:** current file + open files + AST summary; nothing leaves the device when local.
 - **Never** auto-merges without verification.
@@ -186,7 +186,7 @@ Disconnect/Restore Peer C · Kill/Restore signaling · Send duplicate op · Send
 | P2P | WebRTC DataChannel (simple-peer/wrtc), LAN WS+mDNS |
 | Crypto | libsodium (Ed25519, X25519, XChaCha20-Poly1305), SHA-256 |
 | AST | Tree-sitter (Java) |
-| Local AI | Ollama + Qwen2.5-Coder |
+| Local AI | Ollama + mistral:latest |
 | Server | Spring Boot 3 / Java 21 |
 | Storage (peer) | files + SQLite/LevelDB in `.decentraide/` |
 | Tests | Vitest (TS), JUnit (Spring), Playwright (UI smoke) |

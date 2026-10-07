@@ -1,8 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SecurityRuleEngine } from './SecurityRuleEngine';
 import { CodeSafetyAnalyzer } from './CodeSafetyAnalyzer';
 import { OllamaLocalProvider } from '../ai/AIProvider';
-import { GroqProvider } from '../ai/GroqProvider';
 import { YjsCrdtEngine } from '../crdt/CrdtEngine';
 
 describe('Feature 4: AI Hacker & Code Safety Management Test Suite', () => {
@@ -151,7 +150,7 @@ describe('Feature 4: AI Hacker & Code Safety Management Test Suite', () => {
 
   // TEST 8 — Graceful degradation when AI provider fails
   it('TEST 8: Editor continues normal operation when AI analysis fails or throws exceptions', async () => {
-    const failingProvider = new GroqProvider('invalid-key');
+    const failingProvider = new OllamaLocalProvider('http://invalid-localhost-port:9999');
     const analyzer = new CodeSafetyAnalyzer(failingProvider);
 
     const result = await analyzer.analyzeCode('class Test {}', 'Test.java');

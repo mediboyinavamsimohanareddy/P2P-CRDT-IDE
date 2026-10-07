@@ -19,8 +19,7 @@
    - Security Monitor UI with live attack injection simulation harness.
 
 3. **AI Copilot & Semantic Conflict Resolver (Killer Feature):**
-   - Default on-device local AI via Ollama + `qwen2.5-coder`.
-   - Cloud AI fallback via Gemini 1.5 Flash API.
+   - Default on-device local AI via Ollama + `mistral:latest`.
    - Tree-sitter Java AST parser mapping concurrent overlapping changes to AST nodes.
    - 4-stage automated merge verification pipeline: `Parse -> Compile (mvn compile) -> Static Checks -> Tests (mvn test)`.
 

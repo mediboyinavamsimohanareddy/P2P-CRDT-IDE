@@ -56,7 +56,7 @@
 - [x] **T-054 (P0)** Offline mode UX: peer disconnect → pending ops → reconnect → verified.
 
 ## PHASE 6 — AI copilot
-- [x] **T-060 (P0)** AI provider interface; Ollama local provider (Qwen2.5-Coder); external provider behind explicit consent toggle.
+- [x] **T-060 (P0)** AI provider interface; Ollama local provider (`mistral:latest`).
 - [x] **T-061 (P0)** Copilot panel: generate, explain, debug, refactor, tests; proposal diff with Confidence, Attribution, **Apply/Discard**.
 - [x] **T-062 (P0)** Apply proposal → CRDT ops authored by AI-agent identity attributed to accepting user; AI-assisted gutter markers.
 - [x] **T-063 (P1)** Right-panel "AI assistant | Activity" tabs; "Local & private · ON DEVICE" badge.

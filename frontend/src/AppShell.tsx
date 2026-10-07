@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { ProjectBar } from './components/ProjectBar';
 import { LeftSidebar } from './components/LeftSidebar';
@@ -13,6 +13,7 @@ import { BottomPanel } from './components/BottomPanel';
 import { StatusBar } from './components/StatusBar';
 import { useEditorTabs } from './hooks/useEditorTabs';
 import { useFileSystem } from './hooks/useFileSystem';
+import { CollaborationManager } from './core/sync/CollaborationManager';
 
 export const AppShell: React.FC = () => {
   const [activeView, setActiveView] = useState<
@@ -29,6 +30,55 @@ export const AppShell: React.FC = () => {
   } = useEditorTabs();
 
   const { openFolder, workspaceRoot } = useFileSystem();
+
+  const collabManager = CollaborationManager.getInstance();
+  const crdtEngine = collabManager.getCrdtEngine();
+  const transportManager = collabManager.getTransportManager();
+
+  useEffect(() => {
+    collabManager.startSession('DB-72A91');
+  }, []);
+
+  useEffect(() => {
+    if (!activeTab) return;
+    collabManager.setActiveFilePath(activeTab.filePath);
+
+    // Sync active file text into Yjs
+    const ytext = crdtEngine.getText(activeTab.filePath);
+    if (ytext.toString().length === 0 && activeTab.content) {
+      crdtEngine.getDoc().transact(() => {
+        ytext.insert(0, activeTab.content);
+      }, 'app-init');
+    }
+
+    // Subscribe to remote Yjs updates
+    const unsubscribe = crdtEngine.onUpdate((_update, origin) => {
+      if (origin.startsWith('remote')) {
+        const remoteText = ytext.toString();
+        if (remoteText && remoteText !== activeTab.content) {
+          updateTabContent(activeTab.id, remoteText);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [activeTab?.id, activeTab?.filePath]);
+
+  const handleContentChange = (tabId: string, newContent: string) => {
+    updateTabContent(tabId, newContent);
+    const tab = tabs.find((t) => t.id === tabId);
+    if (tab) {
+      const ytext = crdtEngine.getText(tab.filePath);
+      if (ytext.toString() !== newContent) {
+        crdtEngine.getDoc().transact(() => {
+          ytext.delete(0, ytext.length);
+          ytext.insert(0, newContent);
+        }, 'monaco-user-type');
+      }
+    }
+  };
 
   const handleNewFile = () => {
     const fileName = prompt('Enter new file name:', 'Untitled.java');
@@ -70,9 +120,10 @@ export const AppShell: React.FC = () => {
         <div className="flex flex-col flex-1 overflow-hidden border-x border-border-subtle">
           <div className="flex flex-1 overflow-hidden">
             {activeView === 'network' ? (
-              <NetworkAndSyncView />
+              <NetworkAndSyncView crdtEngine={crdtEngine} />
             ) : activeView === 'conflict' ? (
               <ConflictResolutionView
+                crdtEngine={crdtEngine}
                 activeFilePath={activeTab?.filePath}
                 activeCode={activeTab?.content}
                 onApplyResolvedCode={(resolvedCode) => {
@@ -83,6 +134,7 @@ export const AppShell: React.FC = () => {
               />
             ) : activeView === 'security' ? (
               <SecurityMonitorView
+                crdtEngine={crdtEngine}
                 activeFilePath={activeTab?.filePath}
                 activeCode={activeTab?.content}
                 onApplyFix={(fixedCode) => {
@@ -101,7 +153,7 @@ export const AppShell: React.FC = () => {
                 activeTab={activeTab}
                 onSelectTab={setActiveTabId}
                 onCloseTab={closeTab}
-                onContentChange={updateTabContent}
+                onContentChange={handleContentChange}
               />
             )}
             <RightPanel />
@@ -110,7 +162,7 @@ export const AppShell: React.FC = () => {
         </div>
       </div>
 
-      <StatusBar />
+      <StatusBar transportManager={transportManager} />
     </div>
   );
 };

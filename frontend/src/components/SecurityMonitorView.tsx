@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, CheckCircle2, AlertTriangle, RefreshCw, Check, ArrowRight, X } from 'lucide-react';
 import { CodeSafetyAnalyzer, CodeSafetyAnalysisResult } from '../core/security/CodeSafetyAnalyzer';
-import { GroqProvider } from '../core/ai/GroqProvider';
+import { OllamaLocalProvider } from '../core/ai/AIProvider';
 import { YjsCrdtEngine } from '../core/crdt/CrdtEngine';
 
 export interface SecurityMonitorViewProps {
@@ -56,7 +56,7 @@ export const SecurityMonitorView: React.FC<SecurityMonitorViewProps> = ({
         codeToAnalyze = activeCode;
       }
 
-      const analyzer = new CodeSafetyAnalyzer(new GroqProvider());
+      const analyzer = new CodeSafetyAnalyzer(new OllamaLocalProvider());
       const res = await analyzer.analyzeCode(codeToAnalyze, activeFilePath);
       setResult(res);
     } catch (e) {
@@ -72,7 +72,7 @@ export const SecurityMonitorView: React.FC<SecurityMonitorViewProps> = ({
     // 1. Re-analyze fix before applying
     setAnalyzing(true);
     setReanalysisStatus('Re-analyzing proposed AI fix for safety verification...');
-    const analyzer = new CodeSafetyAnalyzer(new GroqProvider());
+    const analyzer = new CodeSafetyAnalyzer(new OllamaLocalProvider());
     let currentCode = sampleInsecureCode;
     if (crdtEngine && activeFilePath) {
       const text = crdtEngine.getText(activeFilePath).toString();

@@ -43,7 +43,7 @@ describe('Zod Schemas Validation', () => {
       proposedCode: 'return pass != null && pass.length() > 8;',
       rationale: 'Merged length and null check.',
       confidence: 94,
-      model: 'Qwen2.5-Coder',
+      model: 'mistral:latest',
       contextHash: 'hash123',
       status: 'pending',
       generatedAt: Date.now(),
@@ -60,7 +60,7 @@ describe('Zod Schemas Validation', () => {
       proposedCode: 'return true;',
       rationale: 'Test',
       confidence: 105, // invalid, max 100
-      model: 'Qwen2.5-Coder',
+      model: 'mistral:latest',
       contextHash: 'hash123',
       status: 'pending',
       generatedAt: Date.now(),

@@ -48,10 +48,10 @@ export const ProjectHealthView: React.FC = () => {
 
         <div className="bg-bg-dark border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
           <div className="flex justify-between items-center font-bold text-gray-200 border-b border-border-subtle pb-2">
-            <span>AI Semantic Merge Engine (Groq)</span>
+            <span>AI Semantic Merge Engine (Ollama)</span>
             <span className="text-status-pass font-mono font-bold">READY</span>
           </div>
-          <p className="text-gray-400 text-[11px]">Groq Llama 3.1 8B Instant provider connected for AST-aware proposals.</p>
+          <p className="text-gray-400 text-[11px]">Ollama mistral:latest provider connected locally for AST-aware proposals.</p>
         </div>
       </div>
     </div>

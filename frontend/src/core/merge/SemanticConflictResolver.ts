@@ -1,12 +1,11 @@
 import { Conflict, Proposal } from '@decentraide/shared';
-import { AIProvider } from '../ai/AIProvider';
-import { GroqProvider } from '../ai/GroqProvider';
+import { AIProvider, OllamaLocalProvider } from '../ai/AIProvider';
 
 export class SemanticConflictResolver {
   private aiProvider: AIProvider;
 
   constructor(aiProvider?: AIProvider) {
-    this.aiProvider = aiProvider || new GroqProvider();
+    this.aiProvider = aiProvider || new OllamaLocalProvider();
   }
 
   async resolveConflict(conflict: Conflict): Promise<Proposal> {
@@ -34,7 +33,7 @@ Please combine these changes into a single syntactically correct, backwards-comp
       id: `prop-${Date.now()}`,
       conflictId: conflict.id,
       proposedCode: response.result,
-      rationale: 'Groq Llama 3.1 8B Instant combined concurrent password validation logic into a single method body.',
+      rationale: 'Ollama Mistral:latest combined concurrent password validation logic into a single method body.',
       confidence: response.confidence,
       model: response.model,
       contextHash: 'ctx-hash-12345',

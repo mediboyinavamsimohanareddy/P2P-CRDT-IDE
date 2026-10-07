@@ -1,24 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import { Network, Wifi, ShieldCheck, Copy, Check, Plus, LogIn } from 'lucide-react';
 import { RoomPeerStore, ConnectedPeer } from '../core/sync/RoomPeerStore';
+import { YjsCrdtEngine } from '../core/crdt/CrdtEngine';
+import { CollaborationManager } from '../core/sync/CollaborationManager';
 
-export const NetworkAndSyncView: React.FC = () => {
+export interface NetworkAndSyncViewProps {
+  crdtEngine?: YjsCrdtEngine;
+}
+
+export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngine }) => {
   const [copied, setCopied] = useState(false);
   const [peers, setPeers] = useState<ConnectedPeer[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [joinInput, setJoinInput] = useState('');
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [workspaceHash, setWorkspaceHash] = useState<string>('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
 
   useEffect(() => {
     const store = RoomPeerStore.getInstance();
     setPeers(store.getPeers());
     setRoomId(store.getRoomId());
 
-    return store.subscribe(() => {
+    const updateHash = () => {
+      if (crdtEngine) {
+        setWorkspaceHash(crdtEngine.computeWorkspaceHash());
+      }
+    };
+    updateHash();
+
+    const unsubscribe = store.subscribe(() => {
       setPeers(store.getPeers());
       setRoomId(store.getRoomId());
+      updateHash();
     });
-  }, []);
+
+    const interval = setInterval(updateHash, 2000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, [crdtEngine]);
 
   const handleCreateRoom = async () => {
     let newRoomId = 'DB-' + Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -38,7 +60,7 @@ export const NetworkAndSyncView: React.FC = () => {
       // Offline fallback mode
     }
 
-    RoomPeerStore.getInstance().setRoomId(newRoomId);
+    CollaborationManager.getInstance().startSession(newRoomId);
     if (navigator.clipboard) {
       navigator.clipboard.writeText(`decentraide://join/${newRoomId}`);
       setCopied(true);
@@ -47,9 +69,20 @@ export const NetworkAndSyncView: React.FC = () => {
     alert(`Room ${newRoomId} created successfully! Invite link copied to clipboard.`);
   };
 
-  const handleJoinRoom = () => {
+  const handleJoinRoom = async () => {
     if (!joinInput.trim()) return;
-    RoomPeerStore.getInstance().setRoomId(joinInput.trim().toUpperCase());
+    const cleanRoomId = joinInput.trim().toUpperCase();
+    try {
+      await fetch('/api/rooms/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: cleanRoomId, peerId: RoomPeerStore.getInstance().getLocalPeerId() }),
+      });
+    } catch {
+      // Offline fallback
+    }
+
+    CollaborationManager.getInstance().startSession(cleanRoomId);
     setShowJoinModal(false);
     setJoinInput('');
   };
@@ -173,7 +206,7 @@ export const NetworkAndSyncView: React.FC = () => {
           <div className="flex flex-col gap-2 font-mono text-[11px] bg-bg-darkest p-3 rounded border border-border-subtle text-gray-300">
             <div>Root State SHA-256:</div>
             <div className="text-accent-mint font-bold break-all">
-              e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+              {workspaceHash}
             </div>
             <div className="text-[10px] text-gray-500 pt-1">
               ✓ All {peers.length} active CRDT state vectors identical across replicas.

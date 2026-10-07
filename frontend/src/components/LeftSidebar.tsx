@@ -3,6 +3,7 @@ import { Files, GitPullRequest, AlertCircle, History, Shield, Activity, Heart, U
 import { useFileSystem } from '../hooks/useFileSystem';
 import { FileEntry } from '../main/preload';
 import { RoomPeerStore, ConnectedPeer } from '../core/sync/RoomPeerStore';
+import { CollaborationManager } from '../core/sync/CollaborationManager';
 
 interface LeftSidebarProps {
   onOpenFile?: (path: string) => void;
@@ -75,7 +76,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
       // Fallback
     }
 
-    RoomPeerStore.getInstance().setRoomId(newRoomId);
+    CollaborationManager.getInstance().startSession(newRoomId);
     if (navigator.clipboard) {
       navigator.clipboard.writeText(`decentraide://join/${newRoomId}`);
       setCopied(true);
@@ -98,7 +99,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
       // Fallback
     }
 
-    RoomPeerStore.getInstance().setRoomId(cleanRoomId);
+    CollaborationManager.getInstance().startSession(cleanRoomId);
     setShowInviteModal(false);
     setInputRoomId('');
   };

@@ -60,7 +60,7 @@ Executes high-confidence regex patterns for common security vulnerabilities prio
 - `SEC-005` (Hardcoded Authentication Bypass)
 
 ### 2. AI Code Safety Analyzer (`CodeSafetyAnalyzer.ts`)
-- Combines static rule engine findings with deep AI semantic completions (`GroqProvider` / `OllamaLocalProvider`).
+- Combines static rule engine findings with deep AI semantic completions (`OllamaLocalProvider`).
 - Returns structured `CodeSafetyAnalysisResult` including `filePath`, `isSyntaxValid`, `isSecuritySafe`, `severity`, `category`, `title`, `explanation`, `affectedArea`, `recommendation`, `suggestedFix`, and `confidence`.
 - Provides `reanalyzeFix()` to evaluate proposed AI fixes before presenting or applying them.
 

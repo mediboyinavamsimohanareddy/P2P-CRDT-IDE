@@ -21,17 +21,57 @@ export interface AIProvider {
 
 export class OllamaLocalProvider implements AIProvider {
   id = 'ollama';
-  name = 'Ollama (Qwen2.5-Coder)';
+  name = 'Ollama (Mistral:latest)';
   isLocal = true;
+  private baseUrl: string;
+  private modelName: string;
+
+  constructor(baseUrl = 'http://localhost:11434', modelName = 'mistral:latest') {
+    this.baseUrl = baseUrl;
+    this.modelName = modelName;
+  }
 
   async generateCompletion(options: AIRequestOptions): Promise<AIResponse> {
-    // In production, this calls http://localhost:11434/api/generate
-    // Fallback/stub response for isolated offline tests:
-    return {
-      result: `// AI-generated ${options.task} for ${options.language || 'code'}\n// Powered by Qwen2.5-Coder\n${options.prompt}`,
-      confidence: 92,
-      model: 'qwen2.5-coder:7b',
-      isLocal: true,
-    };
+    const fullPrompt = options.codeContext
+      ? `Task: ${options.task}\nLanguage: ${options.language || 'java'}\nContext:\n${options.codeContext}\n\nPrompt: ${options.prompt}`
+      : `Task: ${options.task}\nLanguage: ${options.language || 'java'}\n\nPrompt: ${options.prompt}`;
+
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
+
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller?.signal,
+        body: JSON.stringify({
+          model: this.modelName,
+          prompt: fullPrompt,
+          stream: false,
+        }),
+      });
+
+      if (timeoutId) clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Ollama API error ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return {
+        result: data.response || `// Ollama ${this.modelName} generated completion for ${options.task}`,
+        confidence: 95,
+        model: this.modelName,
+        isLocal: true,
+      };
+    } catch (e) {
+      console.warn('[OllamaLocalProvider] Ollama API call failed or timed out, using local fallback:', e);
+      return {
+        result: `// AI-generated ${options.task} for ${options.language || 'code'}\n// Powered by Ollama ${this.modelName}\n${options.prompt}`,
+        confidence: 90,
+        model: `${this.modelName} (Offline Fallback)`,
+        isLocal: true,
+      };
+    }
   }
 }

@@ -60,7 +60,7 @@ export const RightPanel: React.FC = () => {
 
         <div className="bg-bg-dark border border-border-subtle text-gray-400 px-2 py-0.5 rounded text-[10px] font-mono flex items-center gap-1">
           <Cpu className="w-3 h-3 text-status-info" />
-          <span>Groq Llama 3.1</span>
+          <span>Ollama Mistral</span>
         </div>
       </div>
 
