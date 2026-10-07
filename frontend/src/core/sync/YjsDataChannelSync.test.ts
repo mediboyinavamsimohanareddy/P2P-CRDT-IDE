@@ -27,6 +27,7 @@ class MemoryTransport implements Transport {
     this.open = true;
     this.peerStateCb?.(this.remotePeerId, 'connected');
   }
+  }
   disconnect(peerId: string): void {
     this.open = false;
     this.peerStateCb?.(peerId, 'offline');
