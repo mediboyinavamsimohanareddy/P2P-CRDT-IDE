@@ -61,9 +61,11 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'DecentraBank', peerId: 'peer-arjun-01' }),
       });
-      const data = await res.json();
-      if (data.success && data.roomId) {
-        newRoomId = data.roomId;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.roomId) {
+          newRoomId = data.roomId;
+        }
       }
     } catch {
       // Fallback
