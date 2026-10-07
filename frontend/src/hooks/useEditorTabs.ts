@@ -41,11 +41,6 @@ export function useEditorTabs() {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
-  // Auto-open Main.java on initial load
-  useEffect(() => {
-    openFile('Main.java');
-  }, [openFile]);
-
   const openFile = useCallback(async (filePath: string) => {
     let targetTabId = filePath;
 
@@ -97,6 +92,11 @@ export function useEditorTabs() {
 
     setActiveTabId(targetTabId);
   }, []);
+
+  // Auto-open Main.java on initial load
+  useEffect(() => {
+    openFile('Main.java');
+  }, [openFile]);
 
   const closeTab = useCallback((tabId: string) => {
     setTabs((prev) => {
