@@ -13,6 +13,9 @@ import { Frame } from '@decentraide/shared';
 import { SessionStatusStore } from './SessionStatusStore';
 import { OverlapConflictDetector } from '../merge/OverlapConflictDetector';
 import { ConvergenceVerifier } from './ConvergenceVerifier';
+import { HackingSafetyStore } from '../security/HackingSafetyStore';
+import { CodeSafetyAnalyzer } from '../security/CodeSafetyAnalyzer';
+import { OllamaLocalProvider } from '../ai/AIProvider';
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -145,6 +148,54 @@ export class CollaborationManager {
   public setActiveFilePath(filePath: string): void {
     this.activeFilePath = filePath;
     OverlapConflictDetector.getInstance().setFilePath(filePath);
+  }
+
+  /**
+   * Syncs security verdict metadata onto Y.Doc annotation map for peer visibility
+   */
+  public syncSecurityAnnotation(filePath: string): void {
+    const verdict = HackingSafetyStore.getInstance().getVerdict(filePath);
+    const annotationMap = this.crdtEngine.getDoc().getMap('security-annotations');
+    annotationMap.set(filePath, {
+      threatLevel: verdict.threatLevel,
+      securityScore: verdict.securityScore,
+      findingsCount: verdict.findings.length,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Optional pre-share verification hook for explicit Sync / Share actions.
+   * If file is High Risk, blocks explicit sharing until reviewed or acknowledged.
+   */
+  public async verifyAndShare(filePath = this.activeFilePath): Promise<{ allowed: boolean; reason?: string }> {
+    const code = this.crdtEngine.getText(filePath).toString();
+    const analyzer = new CodeSafetyAnalyzer(new OllamaLocalProvider());
+    const result = await analyzer.analyzeCode(code, filePath);
+
+    this.syncSecurityAnnotation(filePath);
+
+    if (result.verdict.threatLevel === 'High Risk' && !result.verdict.isExecutionAllowed) {
+      HackingSafetyStore.getInstance().addAuditLog({
+        action: 'SHARE_VERIFY_BLOCKED',
+        filePath,
+        details: 'Explicit share/sync blocked due to un-reviewed High Risk security findings.',
+        threatLevel: 'High Risk',
+      });
+      return {
+        allowed: false,
+        reason: 'Explicit share blocked: High-risk security vulnerability detected. Please review in Security Dashboard.',
+      };
+    }
+
+    HackingSafetyStore.getInstance().addAuditLog({
+      action: 'SHARE_VERIFY_PASSED',
+      filePath,
+      details: 'Pre-share safety verification passed.',
+      threatLevel: result.verdict.threatLevel,
+    });
+
+    return { allowed: true };
   }
 
   public async startSession(roomId: string, options?: { isHost?: boolean }): Promise<void> {

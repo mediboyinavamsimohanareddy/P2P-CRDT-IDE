@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SecurityRuleEngine } from './SecurityRuleEngine';
 import { CodeSafetyAnalyzer } from './CodeSafetyAnalyzer';
 import { OllamaLocalProvider } from '../ai/AIProvider';
 import { YjsCrdtEngine } from '../crdt/CrdtEngine';
+import { HackingSafetyStore } from './HackingSafetyStore';
 
 describe('Feature 4: AI Hacker & Code Safety Management Test Suite', () => {
   // TEST 1 — Safe code
@@ -46,7 +47,7 @@ describe('Feature 4: AI Hacker & Code Safety Management Test Suite', () => {
     const res = await analyzer.analyzeCode(codeWithSecret, 'Config.java');
 
     expect(res.isSecuritySafe).toBe(false);
-    expect(res.category).toBe('Hardcoded Secret');
+    expect(res.category).toBe('Credential & Secret Exposure');
     expect(res.explanation).toContain('Sensitive credentials');
     expect(res.suggestedFix).toContain('System.getenv("SECRET_KEY")');
   });
@@ -150,11 +151,29 @@ describe('Feature 4: AI Hacker & Code Safety Management Test Suite', () => {
 
   // TEST 8 — Graceful degradation when AI provider fails
   it('TEST 8: Editor continues normal operation when AI analysis fails or throws exceptions', async () => {
-    const failingProvider = new OllamaLocalProvider('http://invalid-localhost-port:9999');
-    const analyzer = new CodeSafetyAnalyzer(failingProvider);
+    const throwProvider: any = {
+      generateCompletion: () => Promise.reject(new Error('AI Server Down')),
+    };
+    const analyzer = new CodeSafetyAnalyzer(throwProvider);
 
     const result = await analyzer.analyzeCode('class Test {}', 'Test.java');
     expect(result.isSyntaxValid).toBe(true);
-    expect(result.title).toBe('No Significant Security Risks Detected');
+    expect(result.verdict.threatLevel).toBe('Warning'); // degraded mode warning
+  });
+
+  // TEST 9 — HackingSafetyStore score and audit logging
+  it('TEST 9: HackingSafetyStore calculates score correctly and records audit logs', async () => {
+    const store = HackingSafetyStore.getInstance();
+    store.clear();
+
+    const analyzer = new CodeSafetyAnalyzer(new OllamaLocalProvider());
+    const res = await analyzer.analyzeCode('public class X { String password = "secret_pass_123456"; }', 'X.java');
+
+    expect(res.verdict.securityScore).toBeLessThan(100);
+    expect(res.verdict.threatLevel).toBe('High Risk');
+
+    const logs = store.getAuditLogs();
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.some((l) => l.action === 'SCAN_COMPLETED')).toBe(true);
   });
 });

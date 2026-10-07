@@ -94,7 +94,10 @@ export const AppShell: React.FC = () => {
         onNewFolder={handleNewFolder}
         onSelectView={(view) => setActiveView(view as any)}
       />
-      <ProjectBar />
+      <ProjectBar
+        activeFilePath={activeTab?.filePath}
+        onOpenSecurityDashboard={() => setActiveView('security')}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <LeftSidebar
@@ -144,6 +147,7 @@ export const AppShell: React.FC = () => {
                 onSelectTab={setActiveTabId}
                 onCloseTab={closeTab}
                 onContentChange={handleContentChange}
+                onOpenSecurityDashboard={() => setActiveView('security')}
               />
             )}
             <RightPanel />

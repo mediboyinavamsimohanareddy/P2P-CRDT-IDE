@@ -10,7 +10,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "@decentraide/shared": ["./shared/dist/index.d.ts"]
+    }
   },
   "include": ["src/**/*"]
 }
