@@ -35,6 +35,7 @@ export const AppShell: React.FC = () => {
   const collabManager = CollaborationManager.getInstance();
   const crdtEngine = collabManager.getCrdtEngine();
   const transportManager = collabManager.getTransportManager();
+  const fsBinding = collabManager.getFsBinding();
   const bindingsRef = useRef<Map<string, CrdtMonacoBinding>>(new Map());
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export const AppShell: React.FC = () => {
     if (!binding) {
       binding = new CrdtMonacoBinding(crdtEngine, activeTab.filePath);
       bindingsRef.current.set(activeTab.filePath, binding);
+      fsBinding.handleFileCreated(activeTab.filePath, activeTab.content || '');
     }
 
     const unbind = binding.bind(
@@ -69,6 +71,7 @@ export const AppShell: React.FC = () => {
     if (!binding) {
       binding = new CrdtMonacoBinding(crdtEngine, tab.filePath);
       bindingsRef.current.set(tab.filePath, binding);
+      fsBinding.handleFileCreated(tab.filePath, newContent);
     }
     binding.handleEditorChange(newContent);
   };
@@ -77,6 +80,7 @@ export const AppShell: React.FC = () => {
     const fileName = prompt('Enter new file name:', 'Untitled.java');
     if (fileName) {
       const path = workspaceRoot ? `${workspaceRoot}/${fileName}` : `src/main/java/${fileName}`;
+      fsBinding.handleFileCreated(path, '');
       openFile(path);
       setActiveView('editor');
     }

@@ -68,8 +68,9 @@ async function connectPair(a: MemoryTransport, b: MemoryTransport): Promise<void
 }
 
 function disconnectPair(a: MemoryTransport, b: MemoryTransport): void {
-  a.disconnect(b['remotePeerId']);
-  b.disconnect(a['remotePeerId']);
+  // Notify each side that its remote peer went offline (same id connect() announced).
+  a.disconnect(a['remotePeerId']);
+  b.disconnect(b['remotePeerId']);
 }
 
 describe('Yjs DataChannel synchronization', () => {

@@ -7,6 +7,7 @@ import { RoomPeerStore } from './RoomPeerStore';
 import { SecurityPipeline, MembershipList } from '../security/SecurityPipeline';
 import { SecurityManager, CryptoIdentity, SymmetricKey } from '../security/SecurityManager';
 import { OpLogManager } from '../crdt/OpLogManager';
+import { CrdtFsBinding } from '../crdt/CrdtFsBinding';
 import { LocalPersistenceManager } from '../../services/LocalPersistenceManager';
 import { OperationLogStore } from '../security/OperationLogStore';
 import { Frame } from '@decentraide/shared';
@@ -59,6 +60,8 @@ function yDocHasFileContent(engine: YjsCrdtEngine): boolean {
   return keys.some((key) => key !== 'metadata' && engine.getText(key).length > 0);
 }
 
+type PendingRemoteFrame = { peerId: string; frameObj: unknown };
+
 export class CollaborationManager {
   private static instance: CollaborationManager;
 
@@ -67,18 +70,19 @@ export class CollaborationManager {
   private peerStore: RoomPeerStore;
   private persistenceManager: LocalPersistenceManager;
   private opLogManager: OpLogManager;
+  private fsBinding: CrdtFsBinding;
   private securityPipeline: SecurityPipeline;
+  private verifier: ConvergenceVerifier;
   private identity: CryptoIdentity;
   private projectKey: SymmetricKey;
   private membership: MembershipList;
   private unsubCrdt?: () => void;
-  private verifier: ConvergenceVerifier;
 
   private isStarted = false;
   private currentRoomId: string | null = null;
   private isHost = false;
   private hasRoomKey = false;
-  private pendingRemoteFrames: Array<{ peerId: string; bytes: Uint8Array }> = [];
+  private pendingRemoteFrames: PendingRemoteFrame[] = [];
   private activeFilePath: string = 'src/main/java/Main.java';
   private webrtcTransport: WebRtcTransport | null = null;
   private connectedPeers = new Set<string>();
@@ -113,6 +117,7 @@ export class CollaborationManager {
 
     this.persistenceManager = new LocalPersistenceManager('workspace');
     this.opLogManager = new OpLogManager(this.crdtEngine, this.persistenceManager);
+    this.fsBinding = new CrdtFsBinding(this.crdtEngine);
 
     this.securityPipeline = new SecurityPipeline(this.membership, this.projectKey, (evt) => {
       if (evt.status === 'REJECTED') {
@@ -141,6 +146,10 @@ export class CollaborationManager {
     return this.opLogManager;
   }
 
+  public getFsBinding(): CrdtFsBinding {
+    return this.fsBinding;
+  }
+
   public getPersistenceManager(): LocalPersistenceManager {
     return this.persistenceManager;
   }
@@ -158,6 +167,10 @@ export class CollaborationManager {
   }
 
   public getVerifier(): ConvergenceVerifier {
+    return this.verifier;
+  }
+
+  public getConvergenceVerifier(): ConvergenceVerifier {
     return this.verifier;
   }
 
@@ -209,6 +222,7 @@ export class CollaborationManager {
 
     if (switchingRoom) {
       this.crdtEngine.reset();
+      this.fsBinding = new CrdtFsBinding(this.crdtEngine);
       this.setupCrdtListeners();
       this.opLogManager.clearPending();
       this.verifier = new ConvergenceVerifier(this.crdtEngine, this.identity.peerId);
@@ -281,11 +295,11 @@ export class CollaborationManager {
         }
 
         if (!this.hasRoomKey) {
-          this.pendingRemoteFrames.push({ peerId, bytes: frameBytes });
+          this.pendingRemoteFrames.push({ peerId, frameObj });
           return;
         }
 
-        this.applySecuredFrame(peerId, frameObj, frameBytes);
+        this.applySecuredFrame(peerId, frameObj);
       } catch (e) {
         console.warn('[CollaborationManager] Frame processing error:', e);
       }
@@ -303,7 +317,7 @@ export class CollaborationManager {
         this.sendHello(peerId);
         if (this.hasRoomKey) {
           this.sendSyncStep1(peerId);
-          this.opLogManager.clearPending();
+          this.flushPendingOps();
         }
       }
       if (state === 'offline') {
@@ -342,6 +356,7 @@ export class CollaborationManager {
       }
       if (this.hasRoomKey) {
         this.sendSyncStep1(peerId);
+        this.flushPendingOps();
       }
       return true;
     }
@@ -350,18 +365,15 @@ export class CollaborationManager {
       this.projectKey = SecurityManager.keyFromBase64(msg.keyB64);
       this.securityPipeline.setProjectKey(this.projectKey);
       this.hasRoomKey = true;
-      const queued = this.pendingRemoteFrames;
+
+      const buffered = [...this.pendingRemoteFrames];
       this.pendingRemoteFrames = [];
-      for (const pending of queued) {
-        try {
-          const parsed = JSON.parse(new TextDecoder().decode(pending.bytes));
-          this.applySecuredFrame(pending.peerId, parsed, pending.bytes);
-        } catch {
-          // skip
-        }
+      for (const item of buffered) {
+        this.applySecuredFrame(item.peerId, item.frameObj);
       }
+
       this.sendSyncStep1(peerId);
-      this.opLogManager.clearPending();
+      this.flushPendingOps();
       return true;
     }
 
@@ -376,27 +388,22 @@ export class CollaborationManager {
   }
 
   private flushPendingFramesForPeer(peerId: string): void {
-    const remaining: Array<{ peerId: string; bytes: Uint8Array }> = [];
+    const remaining: PendingRemoteFrame[] = [];
     for (const pending of this.pendingRemoteFrames) {
       if (pending.peerId !== peerId && peerId !== '*') {
         remaining.push(pending);
         continue;
       }
-      try {
-        const parsed = JSON.parse(new TextDecoder().decode(pending.bytes));
-        this.applySecuredFrame(pending.peerId, parsed, pending.bytes);
-      } catch {
-        // skip
-      }
+      this.applySecuredFrame(pending.peerId, pending.frameObj);
     }
     this.pendingRemoteFrames = remaining;
   }
 
-  private applySecuredFrame(peerId: string, frameObj: unknown, rawBytes?: Uint8Array): void {
+  private applySecuredFrame(peerId: string, frameObj: unknown): void {
     const result = this.securityPipeline.processIncomingFrame(frameObj);
     if (!result.success) {
-      if (result.reason === 'Not a member' && rawBytes) {
-        this.pendingRemoteFrames.push({ peerId, bytes: rawBytes });
+      if (result.reason === 'Not a member') {
+        this.pendingRemoteFrames.push({ peerId, frameObj });
       }
       return;
     }
@@ -461,6 +468,7 @@ export class CollaborationManager {
 
       if (!this.hasRoomKey || this.connectedPeers.size === 0) {
         this.opLogManager.enqueueLocalUpdate(update);
+        this.announceHash();
         return;
       }
 
@@ -469,9 +477,34 @@ export class CollaborationManager {
         filePath: this.activeFilePath,
       };
       const frameBytes = this.sealFrame('crdt.update', payloadObj);
-      this.transportManager.broadcast(frameBytes).catch(() => {
-        this.opLogManager.enqueueLocalUpdate(update);
-      });
+      void this.transportManager.broadcast(frameBytes).then(
+        () => undefined,
+        () => {
+          this.opLogManager.enqueueLocalUpdate(update);
+        }
+      );
+      this.announceHash();
+    });
+  }
+
+  private flushPendingOps(): void {
+    if (!this.hasRoomKey || this.connectedPeers.size === 0) {
+      return;
+    }
+
+    this.opLogManager.flushQueue((op) => {
+      try {
+        if (isEmptyYjsUpdate(op.update)) return true;
+        const payloadObj = {
+          u: uint8ArrayToBase64(op.update),
+          filePath: this.activeFilePath,
+        };
+        const frameBytes = this.sealFrame('crdt.update', payloadObj);
+        this.transportManager.broadcast(frameBytes).catch(() => {});
+        return true;
+      } catch {
+        return false;
+      }
     });
   }
 
@@ -524,7 +557,7 @@ export class CollaborationManager {
     }
   }
 
-  private announceHash(): void {
+  public announceHash(): void {
     const hash = this.verifier.getLocalHash();
     SessionStatusStore.getInstance().patch({ localHash: hash });
     this.publishConvergence();

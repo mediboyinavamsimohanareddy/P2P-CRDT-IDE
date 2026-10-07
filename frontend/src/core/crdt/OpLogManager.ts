@@ -58,4 +58,9 @@ export class OpLogManager {
   clearPending(): void {
     this.pendingQueue = [];
   }
+
+  /** @deprecated Use clearPending() */
+  clearQueue(): void {
+    this.clearPending();
+  }
 }

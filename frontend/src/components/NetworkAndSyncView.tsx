@@ -34,20 +34,22 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
     };
     updateHash();
 
-    const unsubscribe = store.subscribe(() => {
+    const unsubscribeStore = store.subscribe(() => {
       setPeers(store.getPeers());
       setRoomId(store.getRoomId());
       updateHash();
     });
 
-    const interval = setInterval(updateHash, 2000);
-    const unsubStatus = SessionStatusStore.getInstance().subscribe(() => {
+    const unsubscribeSession = SessionStatusStore.getInstance().subscribe(() => {
       setSessionStatus(SessionStatusStore.getInstance().get());
+      updateHash();
     });
 
+    const interval = setInterval(updateHash, 2000);
+
     return () => {
-      unsubscribe();
-      unsubStatus();
+      unsubscribeStore();
+      unsubscribeSession();
       clearInterval(interval);
     };
   }, [crdtEngine]);
