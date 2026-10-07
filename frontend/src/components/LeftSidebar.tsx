@@ -4,6 +4,9 @@ import { useFileSystem } from '../hooks/useFileSystem';
 import { FileEntry } from '../main/preload';
 import { RoomPeerStore, ConnectedPeer } from '../core/sync/RoomPeerStore';
 import { CollaborationManager } from '../core/sync/CollaborationManager';
+import { SignalingConfig, fetchLanInfo } from '../core/sync/SignalingConfig';
+import { createRoom, joinRoom } from '../core/sync/roomApi';
+import { SessionStatusStore } from '../core/sync/SessionStatusStore';
 
 interface LeftSidebarProps {
   onOpenFile?: (path: string) => void;
@@ -22,6 +25,9 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [inputRoomId, setInputRoomId] = useState('');
+  const [signalingHost, setSignalingHost] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [lanJoinUrl, setLanJoinUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const store = RoomPeerStore.getInstance();
@@ -61,22 +67,15 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
     let newRoomId = 'DB-72A91';
     const localPeerId = RoomPeerStore.getInstance().getLocalPeerId();
     try {
-      const res = await fetch('/api/rooms/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'DecentraBank', peerId: localPeerId }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.roomId) {
-          newRoomId = data.roomId;
-        }
+      const res = await createRoom(localPeerId, 'DecentraBank');
+      if (res.success && res.roomId) {
+        newRoomId = res.roomId;
       }
     } catch {
       // Fallback
     }
 
-    CollaborationManager.getInstance().startSession(newRoomId);
+    CollaborationManager.getInstance().startSession(newRoomId, { isHost: true });
     if (navigator.clipboard) {
       navigator.clipboard.writeText(`decentraide://join/${newRoomId}`);
       setCopied(true);
@@ -87,19 +86,25 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
 
   const handleJoinRoom = async () => {
     if (!inputRoomId.trim()) return;
+    setJoinError(null);
     const cleanRoomId = inputRoomId.trim().toUpperCase();
     const localPeerId = RoomPeerStore.getInstance().getLocalPeerId();
-    try {
-      await fetch('/api/rooms/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: cleanRoomId, peerId: localPeerId }),
-      });
-    } catch {
-      // Fallback
+    if (signalingHost.trim()) {
+      SignalingConfig.getInstance().setHost(signalingHost.trim());
     }
 
-    CollaborationManager.getInstance().startSession(cleanRoomId);
+    try {
+      const res = await joinRoom(cleanRoomId, localPeerId);
+      if (!res.success) {
+        setJoinError(res.error || 'Room not found on host');
+        return;
+      }
+    } catch {
+      setJoinError('Could not reach room host backend');
+      return;
+    }
+
+    CollaborationManager.getInstance().startSession(cleanRoomId, { isHost: false });
     setShowInviteModal(false);
     setInputRoomId('');
   };
@@ -353,20 +358,35 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
 
                 <div className="text-center text-[10px] text-gray-500 uppercase tracking-wider">or join existing room</div>
 
-                <div className="flex gap-2">
+                {joinError && (
+                  <div className="text-status-error text-[11px] font-semibold bg-status-error/10 p-2 rounded border border-status-error/30">
+                    {joinError}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
                   <input
                     type="text"
-                    value={inputRoomId}
-                    onChange={(e) => setInputRoomId(e.target.value)}
-                    placeholder="Enter Room ID (e.g. DB-72A91)"
-                    className="bg-bg-darkest text-xs text-gray-200 p-2 rounded border border-border-subtle outline-none flex-1 font-mono uppercase"
+                    value={signalingHost}
+                    onChange={(e) => setSignalingHost(e.target.value)}
+                    placeholder="Signaling Host (e.g. 192.168.1.14:8082)"
+                    className="bg-bg-darkest text-xs text-gray-200 p-2 rounded border border-border-subtle outline-none font-mono"
                   />
-                  <button
-                    onClick={handleJoinRoom}
-                    className="bg-bg-hover hover:bg-border-subtle text-gray-200 px-3 rounded font-semibold text-xs"
-                  >
-                    Join
-                  </button>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={inputRoomId}
+                      onChange={(e) => setInputRoomId(e.target.value)}
+                      placeholder="Enter Room ID (e.g. DB-72A91)"
+                      className="bg-bg-darkest text-xs text-gray-200 p-2 rounded border border-border-subtle outline-none flex-1 font-mono uppercase"
+                    />
+                    <button
+                      onClick={handleJoinRoom}
+                      className="bg-bg-hover hover:bg-border-subtle text-gray-200 px-3 rounded font-semibold text-xs"
+                    >
+                      Join
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

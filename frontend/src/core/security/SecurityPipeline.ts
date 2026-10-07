@@ -25,6 +25,18 @@ export class SecurityPipeline {
     this.onSecurityEvent = onSecurityEvent;
   }
 
+  setProjectKey(key: SymmetricKey): void {
+    this.projectKey = key;
+  }
+
+  addMember(peerId: string, publicKeyPem: string, role: 'Owner' | 'Developer' | 'Reviewer' | 'Observer' = 'Developer'): void {
+    this.membership.members.set(peerId, { role, publicKeyPem });
+  }
+
+  getMembership(): MembershipList {
+    return this.membership;
+  }
+
   processIncomingFrame(rawFrame: unknown): { success: boolean; decryptedPayload?: string; reason?: string } {
     // Stage 1: Schema Check
     const parseResult = FrameSchema.safeParse(rawFrame);
@@ -47,6 +59,10 @@ export class SecurityPipeline {
       this.emitEvent('Not a member', 'REJECTED', `Peer ${frame.from} not in project membership`, frame.from);
       return { success: false, reason: 'Not a member' };
     }
+    if (member.role === 'Observer' && frame.type === 'crdt.update') {
+      this.emitEvent('Unauthorized operation', 'REJECTED', `Observer ${frame.from} cannot write`, frame.from);
+      return { success: false, reason: 'Unauthorized operation' };
+    }
 
     // Stage 4: Signature Verification
     const isValidSig = SecurityManager.verifySignature(frame.payload, frame.sig, member.publicKeyPem);
@@ -65,10 +81,7 @@ export class SecurityPipeline {
         this.projectKey
       );
 
-      // Record opId
       this.seenOpIds.add(frame.opId);
-
-      this.emitEvent('Invalid signature', 'verified', 'Frame successfully processed and decrypted', frame.from);
       return { success: true, decryptedPayload: decrypted };
     } catch {
       this.emitEvent('Payload modified', 'REJECTED', 'Decryption or auth tag verification failed', frame.from);

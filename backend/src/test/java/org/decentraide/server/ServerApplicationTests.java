@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @SpringBootTest
 class ServerApplicationTests {
-
     @Test
     void contextLoads() {
         HealthController controller = new HealthController();

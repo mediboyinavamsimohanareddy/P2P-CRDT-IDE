@@ -1,4 +1,5 @@
 import { Transport, TransportType, TransportStats } from './Transport';
+import { RoomPeerStore } from '../sync/RoomPeerStore';
 
 export type TransportPriority = 'webrtc' | 'lan' | 'bluetooth' | 'local';
 
@@ -228,10 +229,7 @@ export class TransportManager {
   }
 
   private getRoomPeerStore() {
-    if (typeof window !== 'undefined') {
-      return (window as any).__roomPeerStore || null;
-    }
-    return null;
+    return RoomPeerStore.getInstance();
   }
 
   private sendHandshake(peerId: string, transportType: TransportType, type: 'HANDSHAKE_HELLO' | 'HANDSHAKE_ACK'): void {

@@ -1,4 +1,5 @@
 import { Transport, TransportType, TransportStats } from './Transport';
+import { SignalingConfig } from '../sync/SignalingConfig';
 
 export interface WebRtcSignalingMessage {
   type: 'offer' | 'answer' | 'ice-candidate' | 'join-announcement';
@@ -22,28 +23,20 @@ export class WebRtcTransport implements Transport {
 
   private frameCb?: (peerId: string, frame: Uint8Array) => void;
   private peerStateCb?: (peerId: string, state: 'connecting' | 'connected' | 'offline') => void;
+  private iceFailedCb?: (peerId: string, reason: string) => void;
 
   private bytesIn = 0;
   private bytesOut = 0;
   private lastRttMs = 18;
 
-  constructor(
-    localPeerId: string,
-    roomId: string,
-    wsUrl?: string
-  ) {
+  constructor(localPeerId: string, roomId: string, wsUrl?: string) {
     this.localPeerId = localPeerId;
     this.roomId = roomId;
-    if (wsUrl) {
-      this.wsUrl = wsUrl;
-    } else if (typeof window !== 'undefined') {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // Use window.location.host if served through Vite dev server or backend server
-      const host = window.location.host || 'localhost:8082';
-      this.wsUrl = `${protocol}//${host}/ws/signaling`;
-    } else {
-      this.wsUrl = 'ws://localhost:8082/ws/signaling';
-    }
+    this.wsUrl = wsUrl || SignalingConfig.getInstance().signalingWsUrl();
+  }
+
+  onIceFailed(cb: (peerId: string, reason: string) => void): void {
+    this.iceFailedCb = cb;
   }
 
   async start(): Promise<void> {
@@ -55,8 +48,6 @@ export class WebRtcTransport implements Transport {
         this.ws = new WebSocket(this.wsUrl);
 
         this.ws.onopen = () => {
-          console.log('[WebRtcTransport] Connected to signaling server');
-          // Announce presence in room to initiate WebRTC offers with active peers
           this.sendSignaling({
             type: 'join-announcement',
             roomId: this.roomId,
@@ -70,7 +61,6 @@ export class WebRtcTransport implements Transport {
             const msg: WebRtcSignalingMessage = JSON.parse(event.data);
             if (msg.roomId !== this.roomId || msg.from === this.localPeerId) return;
             if (msg.target && msg.target !== this.localPeerId) return;
-
             await this.handleSignalingMessage(msg);
           } catch (e) {
             console.error('[WebRtcTransport] Failed to parse signaling message:', e);
@@ -173,10 +163,8 @@ export class WebRtcTransport implements Transport {
 
   private createPeerConnection(peerId: string): RTCPeerConnection {
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
+      iceServers: [],
+      iceCandidatePoolSize: 0,
     });
 
     pc.onicecandidate = (evt) => {
@@ -196,8 +184,14 @@ export class WebRtcTransport implements Transport {
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      if (pc.iceConnectionState === 'disconnected') {
         this.peerStateCb?.(peerId, 'offline');
+      }
+      if (pc.iceConnectionState === 'failed') {
+        this.peerStateCb?.(peerId, 'offline');
+        const reason =
+          'ICE failed (check Wi-Fi client isolation / Windows firewall). Falling back to LAN relay on the host laptop.';
+        this.iceFailedCb?.(peerId, reason);
       }
     };
 
@@ -209,13 +203,17 @@ export class WebRtcTransport implements Transport {
     dc.binaryType = 'arraybuffer';
 
     dc.onopen = () => {
-      console.log(`[WebRtcTransport] P2P DataChannel open with peer: ${peerId}`);
       this.dataChannels.set(peerId, dc);
       this.peerStateCb?.(peerId, 'connected');
+      try {
+        const ping = new TextEncoder().encode(JSON.stringify({ type: 'P2P_PING', from: this.localPeerId, ts: Date.now() }));
+        dc.send(ping.buffer as ArrayBuffer);
+      } catch {
+        // ping is best-effort
+      }
     };
 
     dc.onclose = () => {
-      console.log(`[WebRtcTransport] DataChannel closed with peer: ${peerId}`);
       this.dataChannels.delete(peerId);
       this.peerStateCb?.(peerId, 'offline');
     };
@@ -223,6 +221,20 @@ export class WebRtcTransport implements Transport {
     dc.onmessage = (evt) => {
       const data = new Uint8Array(evt.data as ArrayBuffer);
       this.bytesIn += data.byteLength;
+      try {
+        const text = new TextDecoder().decode(data);
+        const obj = JSON.parse(text);
+        if (obj && obj.type === 'P2P_PING') {
+          const pong = new TextEncoder().encode(JSON.stringify({ type: 'P2P_PONG', from: this.localPeerId, ts: Date.now() }));
+          if (dc.readyState === 'open') dc.send(pong.buffer as ArrayBuffer);
+          return;
+        }
+        if (obj && obj.type === 'P2P_PONG') {
+          return;
+        }
+      } catch {
+        // not a ping frame
+      }
       this.frameCb?.(peerId, data);
     };
   }
@@ -231,7 +243,6 @@ export class WebRtcTransport implements Transport {
     const { from, type, sdp, candidate } = msg;
 
     if (type === 'join-announcement') {
-      // When a new peer joins the room, send them an offer to open WebRTC DataChannel
       await this.connect(from);
     } else if (type === 'offer') {
       let pc = this.peerConnections.get(from);

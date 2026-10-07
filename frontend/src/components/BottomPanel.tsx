@@ -1,18 +1,39 @@
 import React, { useState, useEffect } from 'react';
-import { Terminal, FileText, Shield, CheckCircle, Activity, AlertCircle, Play, XCircle, CheckCircle2 } from 'lucide-react';
+import { Terminal, FileText, Shield, CheckCircle, Activity, AlertCircle, Play, XCircle, CheckCircle2, GitMerge } from 'lucide-react';
 import { TerminalComponent } from './TerminalComponent';
 import { OperationLogStore, LogEntry } from '../core/security/OperationLogStore';
+import { OverlapConflictDetector } from '../core/merge/OverlapConflictDetector';
+import { Conflict } from '@decentraide/shared';
 
-export const BottomPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'terminal' | 'verification' | 'oplog'>('verification');
+export interface BottomPanelProps {
+  onSelectView?: (view: string) => void;
+}
+
+export const BottomPanel: React.FC<BottomPanelProps> = ({ onSelectView }) => {
+  const [activeTab, setActiveTab] = useState<'terminal' | 'verification' | 'oplog' | 'conflicts'>('verification');
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [activeConflict, setActiveConflict] = useState<Conflict | null>(null);
 
   useEffect(() => {
     const store = OperationLogStore.getInstance();
     setLogs(store.getEntries());
-    return store.subscribe(() => {
+    const unsubLogs = store.subscribe(() => {
       setLogs(store.getEntries());
     });
+
+    const detector = OverlapConflictDetector.getInstance();
+    setActiveConflict(detector.getLatest());
+    const unsubConflicts = detector.subscribe((conflict) => {
+      setActiveConflict(conflict);
+      if (conflict) {
+        setActiveTab('conflicts');
+      }
+    });
+
+    return () => {
+      unsubLogs();
+      unsubConflicts();
+    };
   }, []);
 
   return (
@@ -52,11 +73,49 @@ export const BottomPanel: React.FC = () => {
           <span>Operation Log</span>
           <span className="bg-bg-hover px-1.5 rounded-full text-[9px] font-mono">{logs.length}</span>
         </button>
+
+        <button
+          onClick={() => setActiveTab('conflicts')}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded transition-colors ${
+            activeTab === 'conflicts' ? 'bg-bg-dark text-gray-200 border-t-2 border-status-warn' : 'hover:bg-bg-hover'
+          }`}
+        >
+          <GitMerge className="w-3.5 h-3.5 text-status-warn" />
+          <span>Conflict Detector</span>
+          {activeConflict && (
+            <span className="bg-status-warn/20 text-status-warn px-1.5 rounded-full text-[9px] font-mono font-bold animate-pulse">
+              1 Active
+            </span>
+          )}
+        </button>
       </div>
 
       {/* Content Area */}
       {activeTab === 'terminal' ? (
         <TerminalComponent />
+      ) : activeTab === 'conflicts' ? (
+        <div className="flex-1 p-3 font-mono text-[11px] overflow-y-auto bg-bg-darkest text-gray-300">
+          {!activeConflict ? (
+            <div className="text-gray-500 italic p-2">No active line overlaps detected across peers. Concurrent edits merge cleanly via CRDT Yjs YATA.</div>
+          ) : (
+            <div className="flex items-center justify-between bg-bg-panel p-3 rounded border border-status-warn/30">
+              <div className="flex flex-col gap-1">
+                <span className="text-status-warn font-bold flex items-center gap-1.5 text-xs font-sans">
+                  <AlertCircle className="w-4 h-4" /> Overlapping edits detected in {activeConflict.filePath}
+                </span>
+                <span className="text-gray-400 text-[10px]">
+                  Authors {activeConflict.versions[0]?.authorId} and {activeConflict.versions[1]?.authorId} edited the same file region concurrently.
+                </span>
+              </div>
+              <button
+                onClick={() => onSelectView?.('conflict')}
+                className="bg-status-warn text-bg-darkest font-bold px-3 py-1.5 rounded text-xs hover:bg-status-warn/90 font-sans"
+              >
+                Open Conflict Panel
+              </button>
+            </div>
+          )}
+        </div>
       ) : activeTab === 'oplog' ? (
         <div className="flex-1 p-2 font-mono text-[11px] overflow-y-auto bg-bg-darkest text-gray-300">
           <table className="w-full text-left border-collapse">

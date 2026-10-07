@@ -96,7 +96,11 @@ export class LocalPersistenceManager {
     }
   }
 
-  async saveCrdtSnapshot(snapshot: Uint8Array): Promise<boolean> {
+  snapshotKey(roomId?: string): string {
+    return roomId ? `decentraide:crdt-snapshot:${roomId}` : 'decentraide:crdt-snapshot';
+  }
+
+  async saveCrdtSnapshot(snapshot: Uint8Array, roomId?: string): Promise<boolean> {
     let base64 = '';
     for (let i = 0; i < snapshot.byteLength; i++) {
       base64 += String.fromCharCode(snapshot[i]);
@@ -104,7 +108,7 @@ export class LocalPersistenceManager {
     base64 = btoa(base64);
 
     if (this.hasLocalStorage()) {
-      window.localStorage.setItem('decentraide:crdt-snapshot', base64);
+      window.localStorage.setItem(this.snapshotKey(roomId), base64);
       return true;
     }
     try {
@@ -122,9 +126,9 @@ export class LocalPersistenceManager {
     }
   }
 
-  async getCrdtSnapshot(): Promise<Uint8Array | null> {
+  async getCrdtSnapshot(roomId?: string): Promise<Uint8Array | null> {
     if (this.hasLocalStorage()) {
-      const base64 = window.localStorage.getItem('decentraide:crdt-snapshot');
+      const base64 = window.localStorage.getItem(this.snapshotKey(roomId));
       if (!base64) return null;
       const binaryString = atob(base64);
       const bytes = new Uint8Array(binaryString.length);

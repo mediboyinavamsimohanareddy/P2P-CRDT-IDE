@@ -84,6 +84,11 @@ export class YjsCrdtEngine implements CrdtEngine {
     return fnv1aHash(canonicalData);
   }
 
+  reset(): void {
+    this.doc.destroy();
+    this.doc = new Y.Doc();
+  }
+
   destroy(): void {
     this.doc.destroy();
   }

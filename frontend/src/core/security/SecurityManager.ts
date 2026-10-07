@@ -95,14 +95,7 @@ export class SecurityManager {
       return typeof signature === 'string' ? signature : bytesToBase64(new Uint8Array(signature));
     }
 
-    // Web fallback signature calculation
-    const dataBytes = stringToBytes(data + privateKeyPem);
-    let hash = 0;
-    for (let i = 0; i < dataBytes.length; i++) {
-      hash = ((hash << 5) - hash) + dataBytes[i];
-      hash |= 0;
-    }
-    return btoa(`web-sig-${Math.abs(hash)}`);
+    return this.webMac(data, privateKeyPem);
   }
 
   static verifySignature(data: string, signatureBase64: string, publicKeyPem: string): boolean {
@@ -117,10 +110,21 @@ export class SecurityManager {
       }
     }
 
-    if (signatureBase64.startsWith('web-sig-')) {
-      return true;
+    return signatureBase64 === this.webMac(data, publicKeyPem);
+  }
+
+  private static pemBody(pem: string): string {
+    return pem.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
+  }
+
+  private static webMac(data: string, keyPem: string): string {
+    const dataBytes = stringToBytes(data + this.pemBody(keyPem));
+    let hash = 5381;
+    for (let i = 0; i < dataBytes.length; i++) {
+      hash = ((hash << 5) + hash) ^ dataBytes[i];
+      hash |= 0;
     }
-    return signatureBase64.length > 0;
+    return btoa(`web-mac-${Math.abs(hash).toString(16)}`);
   }
 
   static generateSymmetricKey(): SymmetricKey {
@@ -165,10 +169,12 @@ export class SecurityManager {
     if (typeof window !== 'undefined' && window.crypto) {
       window.crypto.getRandomValues(nonceBytes);
     }
+    const ciphertext = bytesToBase64(encBytes);
+    const nonce = bytesToBase64(nonceBytes);
     return {
-      ciphertext: bytesToBase64(encBytes),
-      nonce: bytesToBase64(nonceBytes),
-      authTag: bytesToBase64(new Uint8Array(16)),
+      ciphertext,
+      nonce,
+      authTag: this.webMac(ciphertext + nonce, bytesToBase64(key)),
     };
   }
 
@@ -185,16 +191,27 @@ export class SecurityManager {
       return decrypted;
     }
 
-    // Web fallback XOR decryption
     try {
       const encBytes = base64ToBytes(ciphertext);
+      const expectedTag = this.webMac(ciphertext + nonceBase64, bytesToBase64(key));
+      if (authTagBase64 && authTagBase64 !== expectedTag) {
+        throw new Error('auth tag mismatch');
+      }
       const decBytes = new Uint8Array(encBytes.length);
       for (let i = 0; i < encBytes.length; i++) {
         decBytes[i] = encBytes[i] ^ key[i % key.length];
       }
       return bytesToString(decBytes);
     } catch {
-      return ciphertext;
+      throw new Error('decrypt failed');
     }
+  }
+
+  static keyToBase64(key: SymmetricKey): string {
+    return bytesToBase64(key);
+  }
+
+  static keyFromBase64(b64: string): SymmetricKey {
+    return base64ToBytes(b64);
   }
 }

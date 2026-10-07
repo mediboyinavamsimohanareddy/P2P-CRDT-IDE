@@ -158,7 +158,7 @@ export const AppShell: React.FC = () => {
             )}
             <RightPanel />
           </div>
-          <BottomPanel />
+          <BottomPanel onSelectView={(view) => setActiveView(view as any)} />
         </div>
       </div>
 

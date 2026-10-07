@@ -1,6 +1,8 @@
 package org.decentraide.server.room;
 
+import org.decentraide.server.runtime.LanAddressResolver;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -40,19 +42,13 @@ public class RoomController {
     String name = body.getOrDefault("name", "DecentraBank");
     String peerId = body.getOrDefault("peerId", "peer-host-a");
 
-    // Room ID format matching spec §3 e.g., DB-72A91
     String randomSuffix = UUID.randomUUID().toString().substring(0, 5).toUpperCase();
     String roomId = "DB-" + randomSuffix;
 
     RoomSession session = new RoomSession(roomId, name, peerId);
     rooms.put(roomId, session);
 
-    return Map.of(
-      "success", true,
-      "roomId", roomId,
-      "name", name,
-      "peers", session.getPeers()
-    );
+    return roomPayload(session, true);
   }
 
   @PostMapping("/join")
@@ -67,12 +63,7 @@ public class RoomController {
     RoomSession session = rooms.get(roomId.toUpperCase());
     session.getPeers().add(peerId);
 
-    return Map.of(
-      "success", true,
-      "roomId", session.getRoomId(),
-      "name", session.getName(),
-      "peers", session.getPeers()
-    );
+    return roomPayload(session, true);
   }
 
   @GetMapping("/{roomId}")
@@ -81,11 +72,22 @@ public class RoomController {
     if (session == null) {
       return Map.of("success", false, "error", "Room not found");
     }
-    return Map.of(
-      "success", true,
-      "roomId", session.getRoomId(),
-      "name", session.getName(),
-      "peers", session.getPeers()
-    );
+    return roomPayload(session, true);
+  }
+
+  private Map<String, Object> roomPayload(RoomSession session, boolean success) {
+    List<String> lan = LanAddressResolver.ipv4Addresses();
+    String primary = lan.isEmpty() ? "127.0.0.1" : lan.get(0);
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("success", success);
+    body.put("roomId", session.getRoomId());
+    body.put("name", session.getName());
+    body.put("hostPeerId", session.getHostPeerId());
+    body.put("peers", session.getPeers());
+    body.put("lanAddresses", lan);
+    body.put("primaryAddress", primary);
+    body.put("signalingPort", 8082);
+    body.put("joinUrl", "http://" + primary + ":5173");
+    return body;
   }
 }

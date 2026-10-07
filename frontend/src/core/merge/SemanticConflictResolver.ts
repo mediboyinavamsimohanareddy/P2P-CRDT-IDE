@@ -29,16 +29,27 @@ Please combine these changes into a single syntactically correct, backwards-comp
       language: 'java',
     });
 
+    const offline = response.model.includes('Offline') || response.confidence < 50;
+    const heuristic = this.heuristicMerge(conflict);
+
     return {
       id: `prop-${Date.now()}`,
       conflictId: conflict.id,
-      proposedCode: response.result,
-      rationale: 'Ollama Mistral:latest combined concurrent password validation logic into a single method body.',
-      confidence: response.confidence,
+      proposedCode: offline ? heuristic : response.result,
+      rationale: offline
+        ? 'Ollama unavailable. Heuristic merge: both versions retained for human Accept A / Accept B / Manual.'
+        : 'Ollama combined concurrent overlapping edits into a single method body.',
+      confidence: offline ? 40 : response.confidence,
       model: response.model,
       contextHash: 'ctx-hash-12345',
       status: 'pending',
       generatedAt: Date.now(),
     };
+  }
+
+  heuristicMerge(conflict: Conflict): string {
+    const a = conflict.versions[0]?.codeSnippet || '';
+    const b = conflict.versions[1]?.codeSnippet || conflict.baseSnippet;
+    return `// Concurrent overlap — choose Accept A, Accept B, or edit manually\n// --- Version A (${conflict.versions[0]?.authorId || 'A'}) ---\n${a}\n// --- Version B (${conflict.versions[1]?.authorId || 'B'}) ---\n${b}\n`;
   }
 }

@@ -88,40 +88,9 @@ export class WebBluetoothTransport implements Transport {
       throw new Error('Web Bluetooth API is not supported in this browser environment');
     }
 
-    this.peerStateCb?.(peerId, 'connecting');
-
-    try {
-      const bluetooth = (navigator as any).bluetooth;
-      const device = await bluetooth.requestDevice({
-        filters: [{ services: [this.gattConfig.serviceUuid] }],
-        optionalServices: ['generic_access'],
-      });
-
-      this.connectedDevice = device;
-      console.log(`[WebBluetoothTransport] Connected to Bluetooth device: ${device.name || device.id}`);
-
-      const server = await device.gatt.connect();
-      this.gattServer = server;
-
-      const service = await server.getPrimaryService(this.gattConfig.serviceUuid);
-      const characteristic = await service.getCharacteristic(this.gattConfig.characteristicUuid);
-
-      this.rxCharacteristic = characteristic;
-      this.txCharacteristic = characteristic;
-
-      await characteristic.startNotifications();
-      characteristic.addEventListener('characteristicvaluechanged', (event: any) => {
-        const value = event.target.value;
-        const frame = new Uint8Array(value.buffer);
-        this.bytesIn += frame.byteLength;
-        this.frameCb?.(peerId, frame);
-      });
-
-      this.peerStateCb?.(peerId, 'connected');
-    } catch (error: any) {
-      this.peerStateCb?.(peerId, 'offline');
-      throw new Error(`Bluetooth connection failed: ${error.message || error}`);
-    }
+    throw new Error(
+      'Bluetooth GATT cannot open a laptop-to-laptop socket in Chrome; nearby path is Wi-Fi WebRTC.'
+    );
   }
 
   disconnect(peerId: string): void {

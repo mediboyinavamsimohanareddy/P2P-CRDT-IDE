@@ -1,4 +1,4 @@
-import { YjsCrdtEngine, CrdtEngine } from '../crdt/CrdtEngine';
+import { YjsCrdtEngine } from '../crdt/CrdtEngine';
 import { TransportManager } from '../transport/TransportManager';
 import { WebRtcTransport } from '../transport/WebRtcTransport';
 import { LanTransport } from '../transport/LanTransport';
@@ -10,11 +10,12 @@ import { OpLogManager } from '../crdt/OpLogManager';
 import { LocalPersistenceManager } from '../../services/LocalPersistenceManager';
 import { OperationLogStore } from '../security/OperationLogStore';
 import { Frame } from '@decentraide/shared';
+import { SessionStatusStore } from './SessionStatusStore';
+import { OverlapConflictDetector } from '../merge/OverlapConflictDetector';
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
+  for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
@@ -22,12 +23,22 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 
 function base64ToUint8Array(base64: string): Uint8Array {
   const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
+}
+
+function newOpId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 export class CollaborationManager {
@@ -42,10 +53,15 @@ export class CollaborationManager {
   private identity: CryptoIdentity;
   private projectKey: SymmetricKey;
   private membership: MembershipList;
+  private unsubCrdt?: () => void;
 
   private isStarted = false;
   private currentRoomId: string | null = null;
+  private isHost = false;
+  private hasRoomKey = false;
+  private pendingRemoteFrames: Array<{ peerId: string; bytes: Uint8Array }> = [];
   private activeFilePath: string = 'src/main/java/Main.java';
+  private webrtcTransport: WebRtcTransport | null = null;
 
   public static getInstance(): CollaborationManager {
     if (!CollaborationManager.instance) {
@@ -61,16 +77,14 @@ export class CollaborationManager {
     this.crdtEngine = new YjsCrdtEngine();
     this.peerStore = RoomPeerStore.getInstance();
     this.identity = SecurityManager.generateIdentity();
+    this.peerStore.setLocalPeerId(this.identity.peerId);
     this.projectKey = SecurityManager.generateSymmetricKey();
 
     this.membership = {
       projectId: 'decentraide-workspace',
-      ownerPeerId: this.peerStore.getLocalPeerId(),
+      ownerPeerId: this.identity.peerId,
       members: new Map([
-        [
-          this.peerStore.getLocalPeerId(),
-          { role: 'Owner', publicKeyPem: this.identity.publicKeyPem },
-        ],
+        [this.identity.peerId, { role: 'Owner', publicKeyPem: this.identity.publicKeyPem }],
       ]),
       ownerSignature: 'sig-owner',
     };
@@ -78,13 +92,11 @@ export class CollaborationManager {
     this.persistenceManager = new LocalPersistenceManager('workspace');
     this.opLogManager = new OpLogManager(this.crdtEngine, this.persistenceManager);
 
-    this.securityPipeline = new SecurityPipeline(
-      this.membership,
-      this.projectKey,
-      (evt) => {
+    this.securityPipeline = new SecurityPipeline(this.membership, this.projectKey, (evt) => {
+      if (evt.status === 'REJECTED') {
         OperationLogStore.getInstance().logRejectedSecurityEvent(evt, this.activeFilePath);
       }
-    );
+    });
 
     this.transportManager = new TransportManager('default-workspace');
     this.setupTransportListeners();
@@ -115,32 +127,61 @@ export class CollaborationManager {
     return this.identity;
   }
 
-  public setActiveFilePath(filePath: string): void {
-    this.activeFilePath = filePath;
+  public getSecurityPipeline(): SecurityPipeline {
+    return this.securityPipeline;
   }
 
-  public async startSession(roomId: string): Promise<void> {
+  public getProjectKey(): SymmetricKey {
+    return this.projectKey;
+  }
+
+  public setActiveFilePath(filePath: string): void {
+    this.activeFilePath = filePath;
+    OverlapConflictDetector.getInstance().setFilePath(filePath);
+  }
+
+  public async startSession(roomId: string, options?: { isHost?: boolean }): Promise<void> {
     if (this.currentRoomId && this.currentRoomId !== roomId && this.isStarted) {
       await this.transportManager.stopAll();
       this.isStarted = false;
     }
 
+    this.isHost = !!options?.isHost;
+    this.hasRoomKey = this.isHost;
     this.currentRoomId = roomId;
     this.peerStore.setRoomId(roomId);
+    this.peerStore.setLocalRole(this.isHost ? 'Host' : 'Peer');
     this.transportManager.setWorkspaceId(roomId);
+    this.membership.projectId = roomId;
+
+    if (this.isHost) {
+      this.securityPipeline.setProjectKey(this.projectKey);
+    }
+
+    SessionStatusStore.getInstance().patch({
+      phase: 'signaling',
+      roomId,
+      isHost: this.isHost,
+      iceFailedReason: null,
+      converged: false,
+    });
+
+    this.crdtEngine.reset();
+    this.setupCrdtListeners();
 
     if (!this.isStarted) {
       const localId = this.peerStore.getLocalPeerId();
 
-      // 1. WebRTC Transport
       const webrtc = new WebRtcTransport(localId, roomId);
+      this.webrtcTransport = webrtc;
+      webrtc.onIceFailed((_peerId, reason) => {
+        SessionStatusStore.getInstance().patch({ phase: 'ice-failed', iceFailedReason: reason });
+      });
       this.transportManager.registerTransport(webrtc);
 
-      // 2. LAN Transport (BroadcastChannel / Local Subnet)
-      const lan = new LanTransport(localId, roomId, `Peer (${localId.substring(5)})`);
+      const lan = new LanTransport(localId, roomId, `Peer (${localId.substring(0, 6)})`);
       this.transportManager.registerTransport(lan);
 
-      // 3. Web Bluetooth Transport
       const bt = new WebBluetoothTransport(localId);
       this.transportManager.registerTransport(bt);
 
@@ -148,8 +189,9 @@ export class CollaborationManager {
       this.isStarted = true;
     }
 
-    // Load any saved CRDT snapshot from local persistence
-    const savedSnapshot = await this.persistenceManager.getCrdtSnapshot();
+    SessionStatusStore.getInstance().patch({ phase: 'connecting' });
+
+    const savedSnapshot = await this.persistenceManager.getCrdtSnapshot(roomId);
     if (savedSnapshot && savedSnapshot.length > 0) {
       try {
         this.crdtEngine.applyUpdate(savedSnapshot, 'local-persistence');
@@ -159,152 +201,231 @@ export class CollaborationManager {
     }
   }
 
+  public injectAttackFrame(rawFrame: unknown): { success: boolean; reason?: string } {
+    return this.securityPipeline.processIncomingFrame(rawFrame);
+  }
+
   private setupTransportListeners(): void {
-    // Process incoming raw transport frames through Security Pipeline
     this.transportManager.onFrame((peerId, frameBytes) => {
       try {
-        // Automatically add dynamic peer to membership list if not present (Open room membership)
-        if (!this.membership.members.has(peerId)) {
-          this.membership.members.set(peerId, {
-            role: 'Developer',
-            publicKeyPem: this.identity.publicKeyPem, // Trust in peer room
-          });
-        }
-
+        const frameStr = new TextDecoder().decode(frameBytes);
         let frameObj: unknown;
         try {
-          const frameStr = new TextDecoder().decode(frameBytes);
           frameObj = JSON.parse(frameStr);
         } catch {
-          // Raw Yjs update fallback or binary payload
-          this.crdtEngine.applyUpdate(frameBytes, `remote-${peerId}`);
-          OperationLogStore.getInstance().logAppliedOp(peerId, 'SYNC', this.activeFilePath);
+          OperationLogStore.getInstance().logRejectedSecurityEvent(
+            {
+              id: `sec-raw-${Date.now()}`,
+              timestamp: Date.now(),
+              peerId,
+              reason: 'Malformed payload',
+              status: 'REJECTED',
+              details: 'Unsigned binary discarded',
+            },
+            this.activeFilePath
+          );
           return;
         }
 
-        // Pass through Security Pipeline
-        const result = this.securityPipeline.processIncomingFrame(frameObj);
-        if (result.success && result.decryptedPayload) {
-          const payloadObj = JSON.parse(result.decryptedPayload);
-          if (payloadObj.u) {
-            const updateBytes = base64ToUint8Array(payloadObj.u);
-            this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
-            OperationLogStore.getInstance().logAppliedOp(peerId, 'UPDATE', this.activeFilePath);
-            this.saveSnapshotDebounced();
-          }
+        if (this.handleControlMessage(peerId, frameObj)) {
+          return;
         }
+
+        if (!this.hasRoomKey) {
+          this.pendingRemoteFrames.push({ peerId, bytes: frameBytes });
+          return;
+        }
+
+        this.applySecuredFrame(peerId, frameObj);
       } catch (e) {
         console.warn('[CollaborationManager] Frame processing error:', e);
       }
     });
 
-    // On handshake completed / sync needed, exchange Yjs state vector updates
     this.transportManager.onPeerState((peerId, state) => {
+      if (state === 'connecting') {
+        SessionStatusStore.getInstance().patch({ phase: 'connecting' });
+      }
       if (state === 'connected') {
-        this.sendStateVectorToPeer(peerId);
-        this.flushPendingOfflineOps();
+        const phase = this.transportManager.getActiveTransportType() === 'lan' ? 'lan-relay' : 'connected';
+        SessionStatusStore.getInstance().patch({ phase });
+        this.sendHello(peerId);
+        if (this.hasRoomKey) {
+          this.sendStateVectorToPeer(peerId);
+          this.flushPendingOfflineOps();
+        }
+      }
+    });
+
+    this.transportManager.onActiveTransportChanged((type) => {
+      if (type === 'lan') {
+        SessionStatusStore.getInstance().patch({ phase: 'lan-relay' });
+      } else if (type === 'local') {
+        SessionStatusStore.getInstance().patch({ phase: 'local' });
       }
     });
   }
 
-  private setupCrdtListeners(): void {
-    // Listen for local CRDT edits and broadcast to peers
-    this.crdtEngine.onUpdate((update, origin) => {
-      if (origin.startsWith('remote')) return; // Ignore updates that came from remote peers
+  private handleControlMessage(peerId: string, obj: unknown): boolean {
+    if (!obj || typeof obj !== 'object') return false;
+    const msg = obj as Record<string, unknown>;
+    if (typeof msg.type !== 'string') return false;
 
-      // Queue op for offline persistence
+    if (msg.type === 'P2P_PING' || msg.type === 'P2P_PONG') return true;
+
+    if (msg.type === 'PEER_HELLO' && typeof msg.peerId === 'string' && typeof msg.publicKeyPem === 'string') {
+      this.securityPipeline.addMember(msg.peerId, msg.publicKeyPem, 'Developer');
+      if (this.isHost && this.hasRoomKey) {
+        this.sendKeyDistribute(peerId);
+      }
+      return true;
+    }
+
+    if (msg.type === 'KEY_DISTRIBUTE' && typeof msg.keyB64 === 'string') {
+      this.projectKey = SecurityManager.keyFromBase64(msg.keyB64);
+      this.securityPipeline.setProjectKey(this.projectKey);
+      this.hasRoomKey = true;
+      for (const pending of this.pendingRemoteFrames) {
+        try {
+          const parsed = JSON.parse(new TextDecoder().decode(pending.bytes));
+          this.applySecuredFrame(pending.peerId, parsed);
+        } catch {
+          // skip
+        }
+      }
+      this.pendingRemoteFrames = [];
+      this.sendStateVectorToPeer(peerId);
+      this.flushPendingOfflineOps();
+      return true;
+    }
+
+    if (msg.type === 'HASH_ANNOUNCE' && typeof msg.hash === 'string') {
+      const localHash = this.crdtEngine.computeWorkspaceHash();
+      const converged = localHash === msg.hash;
+      SessionStatusStore.getInstance().patch({
+        remoteHash: msg.hash,
+        localHash,
+        converged,
+        phase: converged ? 'verified' : SessionStatusStore.getInstance().get().phase,
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  private applySecuredFrame(peerId: string, frameObj: unknown): void {
+    const result = this.securityPipeline.processIncomingFrame(frameObj);
+    if (result.success && result.decryptedPayload) {
+      const payloadObj = JSON.parse(result.decryptedPayload);
+      if (payloadObj.u) {
+        const updateBytes = base64ToUint8Array(payloadObj.u);
+        this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
+        OperationLogStore.getInstance().logAppliedOp(peerId, 'UPDATE', payloadObj.filePath || this.activeFilePath);
+        OverlapConflictDetector.getInstance().noteRemoteEdit(
+          peerId,
+          payloadObj.filePath || this.activeFilePath,
+          this.crdtEngine.getText(payloadObj.filePath || this.activeFilePath).toString()
+        );
+        this.saveSnapshotDebounced();
+        this.announceHash();
+      }
+    }
+  }
+
+  private setupCrdtListeners(): void {
+    this.unsubCrdt?.();
+    this.unsubCrdt = this.crdtEngine.onUpdate((update, origin) => {
+      if (origin.startsWith('remote') || origin === 'local-persistence') return;
+
       this.opLogManager.enqueueLocalUpdate(update);
       this.saveSnapshotDebounced();
+      OverlapConflictDetector.getInstance().noteLocalEdit(
+        this.identity.peerId,
+        this.activeFilePath,
+        this.crdtEngine.getText(this.activeFilePath).toString()
+      );
 
-      // Package update into signed frame and broadcast
+      if (!this.hasRoomKey) return;
+
       const payloadObj = {
         u: uint8ArrayToBase64(update),
         filePath: this.activeFilePath,
       };
-      const payloadStr = JSON.stringify(payloadObj);
-
-      const encrypted = SecurityManager.encrypt(payloadStr, this.projectKey);
-      const encryptedPayloadStr = JSON.stringify(encrypted);
-
-      const signature = SecurityManager.signData(encryptedPayloadStr, this.identity.privateKeyPem);
-
-      const frame: Frame = {
-        v: 1,
-        type: 'crdt.update',
-        projectId: this.currentRoomId || 'default-workspace',
-        from: this.peerStore.getLocalPeerId(),
-        opId: `op-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        lamport: Date.now(),
-        ts: Date.now(),
-        payload: encryptedPayloadStr,
-        sig: signature,
-      };
-
-      const frameBytes = new TextEncoder().encode(JSON.stringify(frame));
-      this.transportManager.broadcast(frameBytes).catch(() => {
-        // Offline broadcast failure handled gracefully
-      });
+      const frameBytes = this.sealFrame('crdt.update', payloadObj);
+      this.transportManager.broadcast(frameBytes).catch(() => {});
     });
   }
 
+  private sendHello(peerId: string): void {
+    const hello = {
+      type: 'PEER_HELLO',
+      peerId: this.identity.peerId,
+      publicKeyPem: this.identity.publicKeyPem,
+      roomId: this.currentRoomId,
+      isHost: this.isHost,
+    };
+    this.transportManager.send(peerId, new TextEncoder().encode(JSON.stringify(hello))).catch(() => {});
+  }
+
+  private sendKeyDistribute(peerId: string): void {
+    const msg = {
+      type: 'KEY_DISTRIBUTE',
+      keyB64: SecurityManager.keyToBase64(this.projectKey),
+      from: this.identity.peerId,
+    };
+    this.transportManager.send(peerId, new TextEncoder().encode(JSON.stringify(msg))).catch(() => {});
+  }
+
   private sendStateVectorToPeer(peerId: string): void {
+    if (!this.hasRoomKey) return;
     try {
       const stateUpdate = this.crdtEngine.encodeStateAsUpdate();
       const payloadObj = {
         u: uint8ArrayToBase64(stateUpdate),
         filePath: this.activeFilePath,
       };
-      const payloadStr = JSON.stringify(payloadObj);
-
-      const encrypted = SecurityManager.encrypt(payloadStr, this.projectKey);
-      const encryptedPayloadStr = JSON.stringify(encrypted);
-
-      const signature = SecurityManager.signData(encryptedPayloadStr, this.identity.privateKeyPem);
-
-      const frame: Frame = {
-        v: 1,
-        type: 'crdt.syncStep2',
-        projectId: this.currentRoomId || 'default-workspace',
-        from: this.peerStore.getLocalPeerId(),
-        opId: `op-sync-${Date.now()}`,
-        lamport: Date.now(),
-        ts: Date.now(),
-        payload: encryptedPayloadStr,
-        sig: signature,
-      };
-
-      const frameBytes = new TextEncoder().encode(JSON.stringify(frame));
+      const frameBytes = this.sealFrame('crdt.syncStep2', payloadObj);
       this.transportManager.send(peerId, frameBytes).catch(() => {});
     } catch (e) {
       console.warn('[CollaborationManager] Failed to send state vector to peer:', peerId, e);
     }
   }
 
+  private announceHash(): void {
+    const hash = this.crdtEngine.computeWorkspaceHash();
+    SessionStatusStore.getInstance().patch({ localHash: hash });
+    const msg = { type: 'HASH_ANNOUNCE', hash, from: this.identity.peerId };
+    this.transportManager.broadcast(new TextEncoder().encode(JSON.stringify(msg))).catch(() => {});
+  }
+
+  private sealFrame(type: Frame['type'], payloadObj: unknown): Uint8Array {
+    const payloadStr = JSON.stringify(payloadObj);
+    const encrypted = SecurityManager.encrypt(payloadStr, this.projectKey);
+    const encryptedPayloadStr = JSON.stringify(encrypted);
+    const signature = SecurityManager.signData(encryptedPayloadStr, this.identity.privateKeyPem);
+    const frame: Frame = {
+      v: 1,
+      type,
+      projectId: this.currentRoomId || 'default-workspace',
+      from: this.peerStore.getLocalPeerId(),
+      opId: newOpId(),
+      lamport: Date.now(),
+      ts: Date.now(),
+      payload: encryptedPayloadStr,
+      sig: signature,
+    };
+    return new TextEncoder().encode(JSON.stringify(frame));
+  }
+
   private flushPendingOfflineOps(): void {
     this.opLogManager.flushQueue((op) => {
       try {
         const payloadObj = {
-          u: Buffer.from(op.update).toString('base64'),
+          u: uint8ArrayToBase64(op.update),
           filePath: this.activeFilePath,
         };
-        const payloadStr = JSON.stringify(payloadObj);
-        const encrypted = SecurityManager.encrypt(payloadStr, this.projectKey);
-        const encryptedPayloadStr = JSON.stringify(encrypted);
-        const signature = SecurityManager.signData(encryptedPayloadStr, this.identity.privateKeyPem);
-
-        const frame: Frame = {
-          v: 1,
-          type: 'crdt.update',
-          projectId: this.currentRoomId || 'default-workspace',
-          from: this.peerStore.getLocalPeerId(),
-          opId: op.id,
-          lamport: op.timestamp,
-          ts: op.timestamp,
-          payload: encryptedPayloadStr,
-          sig: signature,
-        };
-
-        const frameBytes = new TextEncoder().encode(JSON.stringify(frame));
+        const frameBytes = this.sealFrame('crdt.update', payloadObj);
         this.transportManager.broadcast(frameBytes);
         return true;
       } catch {
@@ -313,12 +434,12 @@ export class CollaborationManager {
     });
   }
 
-  private saveTimeout: any = null;
+  private saveTimeout: ReturnType<typeof setTimeout> | null = null;
   private saveSnapshotDebounced(): void {
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     this.saveTimeout = setTimeout(() => {
       const snapshot = this.crdtEngine.encodeStateAsUpdate();
-      this.persistenceManager.saveCrdtSnapshot(snapshot);
+      this.persistenceManager.saveCrdtSnapshot(snapshot, this.currentRoomId || undefined);
     }, 1000);
   }
 }

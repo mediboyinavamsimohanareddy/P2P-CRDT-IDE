@@ -1,4 +1,5 @@
 import { Transport, TransportType, TransportStats } from './Transport';
+import { SignalingConfig } from '../sync/SignalingConfig';
 
 export interface LanDiscoveryAnnouncement {
   type: 'LAN_DISCOVERY_ANNOUNCE' | 'LAN_DISCOVERY_RESPONSE';
@@ -9,96 +10,50 @@ export interface LanDiscoveryAnnouncement {
   protocolVersion: string;
 }
 
+export interface LanTransportOptions {
+  /** BroadcastChannel is same-origin only. Jury path must use the host LAN relay WebSocket. */
+  testBroadcast?: boolean;
+}
+
+interface RelayEnvelope {
+  from: string;
+  target?: string;
+  workspaceId: string;
+  payloadB64: string;
+}
+
 export class LanTransport implements Transport {
   id: TransportType = 'lan';
 
   private localPeerId: string;
   private workspaceId: string;
   private displayName: string;
+  private testBroadcast: boolean;
 
   private frameCb?: (peerId: string, frame: Uint8Array) => void;
   private peerStateCb?: (peerId: string, state: 'connecting' | 'connected' | 'offline') => void;
 
-  private connectedPeers = new Map<string, { socket?: WebSocket; connectionType: 'direct' | 'broadcast' }>();
+  private connectedPeers = new Map<string, { connectionType: 'relay' | 'broadcast' }>();
   private activeLocalChannel: BroadcastChannel | null = null;
+  private relayWs: WebSocket | null = null;
 
   private bytesIn = 0;
   private bytesOut = 0;
   private lastRttMs = 5;
 
-  constructor(localPeerId: string, workspaceId: string, displayName?: string) {
+  constructor(localPeerId: string, workspaceId: string, displayName?: string, options?: LanTransportOptions) {
     this.localPeerId = localPeerId;
     this.workspaceId = workspaceId;
     this.displayName = displayName || `LAN-Peer-${localPeerId.substring(0, 4)}`;
+    this.testBroadcast = !!options?.testBroadcast;
   }
 
   async start(): Promise<void> {
-    // Setup local subnet broadcast channel using BroadcastChannel API
-    if (typeof window !== 'undefined' && typeof window.BroadcastChannel !== 'undefined') {
-      const channelName = `decentraide-lan-${this.workspaceId}`;
-      this.activeLocalChannel = new BroadcastChannel(channelName);
-
-      this.activeLocalChannel.onmessage = (evt) => {
-        const data = evt.data;
-        if (!data || !(data instanceof Uint8Array || data.buffer)) return;
-
-        let frame: Uint8Array;
-        if (data instanceof Uint8Array) {
-          frame = data;
-        } else {
-          frame = new Uint8Array(data.buffer);
-        }
-
-        // Extract sender header if encoded
-        const headerEnd = this.findHeaderEnd(frame);
-        if (headerEnd !== -1) {
-          const headerStr = new TextDecoder().decode(frame.slice(0, headerEnd));
-          try {
-            const header = JSON.parse(headerStr);
-            if (header.from === this.localPeerId) return; // ignore self
-            if (header.workspaceId && header.workspaceId !== this.workspaceId) return;
-
-            const payload = frame.slice(headerEnd + 1);
-
-            // Check if this payload is a LAN discovery announcement message
-            try {
-              const payloadObj = JSON.parse(new TextDecoder().decode(payload));
-              if (payloadObj && (payloadObj.type === 'LAN_DISCOVERY_ANNOUNCE' || payloadObj.type === 'LAN_DISCOVERY_RESPONSE')) {
-                if (payloadObj.peerId && payloadObj.peerId !== this.localPeerId) {
-                  if (!this.connectedPeers.has(payloadObj.peerId)) {
-                    this.connectedPeers.set(payloadObj.peerId, { connectionType: 'broadcast' });
-                    this.peerStateCb?.(payloadObj.peerId, 'connected');
-
-                    if (payloadObj.type === 'LAN_DISCOVERY_ANNOUNCE') {
-                      this.sendDiscoveryResponse(payloadObj.peerId);
-                    }
-                  }
-                }
-                return;
-              }
-            } catch {
-              // Standard payload frame
-            }
-
-            if (!this.connectedPeers.has(header.from)) {
-              this.connectedPeers.set(header.from, { connectionType: 'broadcast' });
-              this.peerStateCb?.(header.from, 'connected');
-            }
-
-            this.bytesIn += payload.byteLength;
-            this.frameCb?.(header.from, payload);
-          } catch (e) {
-            // Raw frame without header
-            this.frameCb?.('lan-peer-broadcast', frame);
-          }
-        }
-      };
-
-      console.log(`[LanTransport] Local LAN Broadcast Channel initialized for workspace: ${this.workspaceId}`);
+    if (this.testBroadcast && typeof window !== 'undefined' && typeof window.BroadcastChannel !== 'undefined') {
+      this.startBroadcastChannel();
+      return;
     }
-
-    // Announce presence on LAN
-    this.announcePresence();
+    await this.startRelay();
   }
 
   async stop(): Promise<void> {
@@ -106,7 +61,10 @@ export class LanTransport implements Transport {
       this.activeLocalChannel.close();
       this.activeLocalChannel = null;
     }
-
+    if (this.relayWs) {
+      this.relayWs.close();
+      this.relayWs = null;
+    }
     for (const [peerId] of this.connectedPeers) {
       this.peerStateCb?.(peerId, 'offline');
     }
@@ -115,10 +73,7 @@ export class LanTransport implements Transport {
 
   async connect(peerId: string): Promise<void> {
     if (this.connectedPeers.has(peerId)) return;
-
     this.peerStateCb?.(peerId, 'connecting');
-
-    // Send LAN Discovery Announce
     this.announcePresence();
   }
 
@@ -130,29 +85,11 @@ export class LanTransport implements Transport {
   }
 
   async send(peerId: string, frame: Uint8Array): Promise<void> {
-    if (this.activeLocalChannel) {
-      const header = JSON.stringify({ from: this.localPeerId, target: peerId, workspaceId: this.workspaceId });
-      const headerBytes = new TextEncoder().encode(header + '\n');
-      const combined = new Uint8Array(headerBytes.length + frame.length);
-      combined.set(headerBytes, 0);
-      combined.set(frame, headerBytes.length);
-
-      this.activeLocalChannel.postMessage(combined);
-      this.bytesOut += combined.byteLength;
-    }
+    this.postFrame(frame, peerId);
   }
 
   async broadcast(frame: Uint8Array): Promise<void> {
-    if (this.activeLocalChannel) {
-      const header = JSON.stringify({ from: this.localPeerId, workspaceId: this.workspaceId });
-      const headerBytes = new TextEncoder().encode(header + '\n');
-      const combined = new Uint8Array(headerBytes.length + frame.length);
-      combined.set(headerBytes, 0);
-      combined.set(frame, headerBytes.length);
-
-      this.activeLocalChannel.postMessage(combined);
-      this.bytesOut += combined.byteLength;
-    }
+    this.postFrame(frame);
   }
 
   onFrame(cb: (peerId: string, frame: Uint8Array) => void): void {
@@ -171,52 +108,140 @@ export class LanTransport implements Transport {
     };
   }
 
+  private async startRelay(): Promise<void> {
+    if (typeof WebSocket === 'undefined') {
+      return;
+    }
+    return new Promise((resolve) => {
+      try {
+        const url = SignalingConfig.getInstance().lanRelayWsUrl(this.workspaceId);
+        this.relayWs = new WebSocket(url);
+        this.relayWs.onopen = () => {
+          this.announcePresence();
+          resolve();
+        };
+        this.relayWs.onmessage = (evt) => {
+          this.handleRelayMessage(typeof evt.data === 'string' ? evt.data : '');
+        };
+        this.relayWs.onerror = () => resolve();
+        this.relayWs.onclose = () => {
+          for (const [peerId] of this.connectedPeers) {
+            this.peerStateCb?.(peerId, 'offline');
+          }
+        };
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  private startBroadcastChannel(): void {
+    const channelName = `decentraide-lan-${this.workspaceId}`;
+    this.activeLocalChannel = new BroadcastChannel(channelName);
+    this.activeLocalChannel.onmessage = (evt) => {
+      const data = evt.data;
+      if (typeof data === 'string') {
+        this.handleRelayMessage(data);
+        return;
+      }
+    };
+    this.announcePresence();
+  }
+
+  private handleRelayMessage(raw: string): void {
+    try {
+      const env = JSON.parse(raw) as RelayEnvelope | LanDiscoveryAnnouncement;
+      if ('type' in env && (env.type === 'LAN_DISCOVERY_ANNOUNCE' || env.type === 'LAN_DISCOVERY_RESPONSE')) {
+        if (env.peerId !== this.localPeerId && env.workspaceId === this.workspaceId) {
+          if (!this.connectedPeers.has(env.peerId)) {
+            this.connectedPeers.set(env.peerId, { connectionType: this.relayWs ? 'relay' : 'broadcast' });
+            this.peerStateCb?.(env.peerId, 'connected');
+            if (env.type === 'LAN_DISCOVERY_ANNOUNCE') {
+              this.sendDiscoveryResponse(env.peerId);
+            }
+          }
+        }
+        return;
+      }
+      const envelope = env as RelayEnvelope;
+      if (!envelope.from || envelope.from === this.localPeerId) return;
+      if (envelope.workspaceId && envelope.workspaceId !== this.workspaceId) return;
+      if (envelope.target && envelope.target !== this.localPeerId) return;
+
+      if (!this.connectedPeers.has(envelope.from)) {
+        this.connectedPeers.set(envelope.from, { connectionType: this.relayWs ? 'relay' : 'broadcast' });
+        this.peerStateCb?.(envelope.from, 'connected');
+      }
+
+      const payload = this.b64ToBytes(envelope.payloadB64);
+      this.bytesIn += payload.byteLength;
+      this.frameCb?.(envelope.from, payload);
+    } catch {
+      // ignore malformed relay frames
+    }
+  }
+
+  private postFrame(frame: Uint8Array, target?: string): void {
+    const envelope: RelayEnvelope = {
+      from: this.localPeerId,
+      target,
+      workspaceId: this.workspaceId,
+      payloadB64: this.bytesToB64(frame),
+    };
+    const json = JSON.stringify(envelope);
+    this.bytesOut += frame.byteLength;
+    if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
+      this.relayWs.send(json);
+    } else if (this.activeLocalChannel) {
+      this.activeLocalChannel.postMessage(json);
+    }
+  }
+
   private announcePresence(): void {
-    if (this.activeLocalChannel) {
-      const announcement: LanDiscoveryAnnouncement = {
-        type: 'LAN_DISCOVERY_ANNOUNCE',
-        peerId: this.localPeerId,
-        displayName: this.displayName,
-        workspaceId: this.workspaceId,
-        port: 8082,
-        protocolVersion: '1.0.0',
-      };
-
-      const headerBytes = new TextEncoder().encode(JSON.stringify({ from: this.localPeerId, workspaceId: this.workspaceId }) + '\n');
-      const payloadBytes = new TextEncoder().encode(JSON.stringify(announcement));
-      const combined = new Uint8Array(headerBytes.length + payloadBytes.length);
-      combined.set(headerBytes, 0);
-      combined.set(payloadBytes, headerBytes.length);
-
-      this.activeLocalChannel.postMessage(combined);
+    const announcement: LanDiscoveryAnnouncement = {
+      type: 'LAN_DISCOVERY_ANNOUNCE',
+      peerId: this.localPeerId,
+      displayName: this.displayName,
+      workspaceId: this.workspaceId,
+      port: 8082,
+      protocolVersion: '1.0.0',
+    };
+    const json = JSON.stringify(announcement);
+    if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
+      this.relayWs.send(json);
+    } else if (this.activeLocalChannel) {
+      this.activeLocalChannel.postMessage(json);
     }
   }
 
   private sendDiscoveryResponse(targetPeerId: string): void {
-    if (this.activeLocalChannel) {
-      const response: LanDiscoveryAnnouncement = {
-        type: 'LAN_DISCOVERY_RESPONSE',
-        peerId: this.localPeerId,
-        displayName: this.displayName,
-        workspaceId: this.workspaceId,
-        port: 8082,
-        protocolVersion: '1.0.0',
-      };
-
-      const headerBytes = new TextEncoder().encode(JSON.stringify({ from: this.localPeerId, target: targetPeerId, workspaceId: this.workspaceId }) + '\n');
-      const payloadBytes = new TextEncoder().encode(JSON.stringify(response));
-      const combined = new Uint8Array(headerBytes.length + payloadBytes.length);
-      combined.set(headerBytes, 0);
-      combined.set(payloadBytes, headerBytes.length);
-
-      this.activeLocalChannel.postMessage(combined);
+    const response = {
+      type: 'LAN_DISCOVERY_RESPONSE' as const,
+      peerId: this.localPeerId,
+      displayName: this.displayName,
+      workspaceId: this.workspaceId,
+      port: 8082,
+      protocolVersion: '1.0.0',
+      target: targetPeerId,
+    };
+    const json = JSON.stringify(response);
+    if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
+      this.relayWs.send(json);
+    } else if (this.activeLocalChannel) {
+      this.activeLocalChannel.postMessage(json);
     }
   }
 
-  private findHeaderEnd(frame: Uint8Array): number {
-    for (let i = 0; i < frame.length; i++) {
-      if (frame[i] === 10) return i; // '\n'
-    }
-    return -1;
+  private bytesToB64(bytes: Uint8Array): string {
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
+  private b64ToBytes(base64: string): Uint8Array {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+    return bytes;
   }
 }

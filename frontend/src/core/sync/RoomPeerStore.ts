@@ -43,10 +43,24 @@ export class RoomPeerStore {
     ];
   }
 
+  setLocalPeerId(peerId: string): void {
+    const previous = this.localPeerId;
+    this.localPeerId = peerId;
+    this.peers = this.peers.map((p) =>
+      p.id === previous ? { ...p, id: peerId, displayName: `You (${peerId.substring(0, 6)})` } : p
+    );
+    this.notify();
+  }
+
+  setLocalRole(role: 'Host' | 'Peer'): void {
+    this.peers = this.peers.map((p) => (p.id === this.localPeerId ? { ...p, role } : p));
+    this.notify();
+  }
+
   setRoomId(roomId: string): void {
     this.roomId = roomId;
     this.notify();
-  };
+  }
 
   getRoomId(): string | null {
     return this.roomId;

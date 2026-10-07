@@ -36,7 +36,7 @@ describe('Feature 3: Offline-First Nearby Collaboration Test Suite', () => {
   // TEST 2 — Internet failure transition & editor document state preservation
   it('TEST 2: Internet signaling failure triggers failover to LAN or local mode without losing Y.Doc state', async () => {
     const manager = new TransportManager('workspace-1');
-    const lan = new LanTransport('peer-A', 'workspace-1');
+    const lan = new LanTransport('peer-A', 'workspace-1', undefined, { testBroadcast: true });
     manager.registerTransport(lan);
 
     const doc = new YjsCrdtEngine();
@@ -58,11 +58,11 @@ describe('Feature 3: Offline-First Nearby Collaboration Test Suite', () => {
     const peerB = new YjsCrdtEngine();
 
     const managerA = new TransportManager(workspaceId);
-    const lanA = new LanTransport('peer-A', workspaceId, 'Laptop-A');
+    const lanA = new LanTransport('peer-A', workspaceId, 'Laptop-A', { testBroadcast: true });
     managerA.registerTransport(lanA);
 
     const managerB = new TransportManager(workspaceId);
-    const lanB = new LanTransport('peer-B', workspaceId, 'Laptop-B');
+    const lanB = new LanTransport('peer-B', workspaceId, 'Laptop-B', { testBroadcast: true });
     managerB.registerTransport(lanB);
 
     await managerA.startAll();

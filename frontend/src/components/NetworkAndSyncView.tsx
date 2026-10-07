@@ -3,6 +3,8 @@ import { Network, Wifi, ShieldCheck, Copy, Check, Plus, LogIn } from 'lucide-rea
 import { RoomPeerStore, ConnectedPeer } from '../core/sync/RoomPeerStore';
 import { YjsCrdtEngine } from '../core/crdt/CrdtEngine';
 import { CollaborationManager } from '../core/sync/CollaborationManager';
+import { SignalingConfig } from '../core/sync/SignalingConfig';
+import { createRoom, joinRoom } from '../core/sync/roomApi';
 
 export interface NetworkAndSyncViewProps {
   crdtEngine?: YjsCrdtEngine;
@@ -13,6 +15,8 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
   const [peers, setPeers] = useState<ConnectedPeer[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [joinInput, setJoinInput] = useState('');
+  const [signalingHostInput, setSignalingHostInput] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [workspaceHash, setWorkspaceHash] = useState<string>('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
 
@@ -45,22 +49,15 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
   const handleCreateRoom = async () => {
     let newRoomId = 'DB-' + Math.random().toString(36).substring(2, 7).toUpperCase();
     try {
-      const res = await fetch('/api/rooms/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'DecentraWorkspace', peerId: RoomPeerStore.getInstance().getLocalPeerId() }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.roomId) {
-          newRoomId = data.roomId;
-        }
+      const res = await createRoom(RoomPeerStore.getInstance().getLocalPeerId(), 'DecentraWorkspace');
+      if (res.success && res.roomId) {
+        newRoomId = res.roomId;
       }
     } catch {
       // Offline fallback mode
     }
 
-    CollaborationManager.getInstance().startSession(newRoomId);
+    CollaborationManager.getInstance().startSession(newRoomId, { isHost: true });
     if (navigator.clipboard) {
       navigator.clipboard.writeText(`decentraide://join/${newRoomId}`);
       setCopied(true);
@@ -71,18 +68,24 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
 
   const handleJoinRoom = async () => {
     if (!joinInput.trim()) return;
+    setJoinError(null);
     const cleanRoomId = joinInput.trim().toUpperCase();
-    try {
-      await fetch('/api/rooms/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: cleanRoomId, peerId: RoomPeerStore.getInstance().getLocalPeerId() }),
-      });
-    } catch {
-      // Offline fallback
+    if (signalingHostInput.trim()) {
+      SignalingConfig.getInstance().setHost(signalingHostInput.trim());
     }
 
-    CollaborationManager.getInstance().startSession(cleanRoomId);
+    try {
+      const res = await joinRoom(cleanRoomId, RoomPeerStore.getInstance().getLocalPeerId());
+      if (!res.success) {
+        setJoinError(res.error || 'Room not found on host');
+        return;
+      }
+    } catch {
+      setJoinError('Could not reach room host backend');
+      return;
+    }
+
+    CollaborationManager.getInstance().startSession(cleanRoomId, { isHost: false });
     setShowJoinModal(false);
     setJoinInput('');
   };
@@ -138,13 +141,25 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
             <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
               <LogIn className="w-4 h-4 text-status-info" /> Join Collaborative P2P Room
             </h3>
-            <p className="text-xs text-gray-400">Enter the Room ID supplied by the host laptop:</p>
+            <p className="text-xs text-gray-400">Enter the Room ID and host LAN address supplied by the host laptop:</p>
+            {joinError && (
+              <div className="text-status-error text-[11px] font-semibold bg-status-error/10 p-2 rounded border border-status-error/30">
+                {joinError}
+              </div>
+            )}
+            <input
+              type="text"
+              placeholder="Signaling Host (e.g. 192.168.1.14:8082)"
+              value={signalingHostInput}
+              onChange={(e) => setSignalingHostInput(e.target.value)}
+              className="bg-bg-darkest border border-border-subtle px-3 py-2 rounded text-xs text-gray-200 font-mono focus:outline-none focus:border-accent-mint"
+            />
             <input
               type="text"
               placeholder="e.g. DB-72A91"
               value={joinInput}
               onChange={(e) => setJoinInput(e.target.value)}
-              className="bg-bg-darkest border border-border-subtle px-3 py-2 rounded text-xs text-gray-200 font-mono focus:outline-none focus:border-accent-mint"
+              className="bg-bg-darkest border border-border-subtle px-3 py-2 rounded text-xs text-gray-200 font-mono uppercase focus:outline-none focus:border-accent-mint"
             />
             <div className="flex justify-end gap-2 mt-2">
               <button

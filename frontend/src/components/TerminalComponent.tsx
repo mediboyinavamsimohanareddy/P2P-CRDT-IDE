@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import React, { useEffect, useRef } from 'react';
 import { Terminal as XTerminal } from 'xterm';
 import 'xterm/css/xterm.css';

@@ -12,13 +12,14 @@ export default defineConfig(({ mode }) => {
       global: 'globalThis',
     },
     server: {
+      host: true,
       proxy: {
         '/api': {
-          target: 'http://localhost:8082',
+          target: process.env.VITE_SIGNALING_URL || 'http://localhost:8082',
           changeOrigin: true,
         },
         '/ws': {
-          target: 'ws://localhost:8082',
+          target: (process.env.VITE_SIGNALING_URL || 'http://localhost:8082').replace(/^http/, 'ws'),
           ws: true,
         },
       },

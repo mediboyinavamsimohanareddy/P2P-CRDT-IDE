@@ -31,7 +31,7 @@ export interface SecurityEvent {
   id: string;
   timestamp: number;
   peerId: string;
-  reason: 'Invalid signature' | 'Not a member' | 'Payload modified' | 'Duplicate operation' | 'Malformed payload';
+  reason: 'Invalid signature' | 'Not a member' | 'Payload modified' | 'Duplicate operation' | 'Malformed payload' | 'Unauthorized operation';
   status: 'REJECTED' | 'verified';
   details?: string;
 }

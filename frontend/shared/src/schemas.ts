@@ -47,6 +47,7 @@ export const SecurityEventSchema = z.object({
     'Payload modified',
     'Duplicate operation',
     'Malformed payload',
+    'Unauthorized operation',
   ]),
   status: z.enum(['REJECTED', 'verified']),
   details: z.string().optional(),
