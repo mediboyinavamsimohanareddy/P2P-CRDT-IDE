@@ -61,36 +61,40 @@ export class TransportManager {
       this.frameListeners.forEach((cb) => cb(peerId, frame));
     });
 
-    transport.onPeerState((peerId, state) => {
-      const peerSet = this.connectedPeersByTransport.get(transport.id)!;
-      if (state === 'connected') {
-        peerSet.add(peerId);
-        // Add to RoomPeerStore dynamic live peers list
-        const store = this.getRoomPeerStore();
-        if (store && store.addPeer) {
-          store.addPeer({
-            id: peerId,
-            displayName: `Peer (${peerId.length > 8 ? peerId.substring(0, 6) : peerId})`,
-            role: 'Peer',
-            status: 'connected',
-            activity: `Connected via ${transport.id.toUpperCase()}`,
-            color: transport.id === 'lan' ? '#36B37E' : transport.id === 'bluetooth' ? '#FFAB00' : '#4D96FF',
-          });
-        }
-        // Initiate Handshake
-        this.sendHandshake(peerId, transport.id, 'HANDSHAKE_HELLO');
-      } else if (state === 'offline') {
-        peerSet.delete(peerId);
-        this.knownPeers.delete(peerId);
-        const store = this.getRoomPeerStore();
-        if (store && store.removePeer) {
-          store.removePeer(peerId);
-        }
-      }
+      transport.onPeerState((peerId, state) => {
+        const peerSet = this.connectedPeersByTransport.get(transport.id)!;
+        if (state === 'connected') {
+          peerSet.add(peerId);
+          // Evaluate priority and activate this transport if it is higher priority or active
+          this.evaluateFailoverPolicy();
 
-      this.peerStateListeners.forEach((cb) => cb(peerId, state));
-      this.evaluateFailoverPolicy();
-    });
+          // Add to RoomPeerStore dynamic live peers list
+          const store = this.getRoomPeerStore();
+          if (store && store.addPeer) {
+            store.addPeer({
+              id: peerId,
+              displayName: `Peer (${peerId.length > 8 ? peerId.substring(0, 6) : peerId})`,
+              role: 'Peer',
+              status: 'connected',
+              activity: `Connected via ${transport.id.toUpperCase()}`,
+              color: transport.id === 'lan' ? '#36B37E' : transport.id === 'bluetooth' ? '#FFAB00' : '#4D96FF',
+            });
+          }
+          // Initiate Handshake
+          this.sendHandshake(peerId, transport.id, 'HANDSHAKE_HELLO');
+        } else if (state === 'offline') {
+          peerSet.delete(peerId);
+          this.knownPeers.delete(peerId);
+          this.evaluateFailoverPolicy();
+
+          const store = this.getRoomPeerStore();
+          if (store && store.removePeer) {
+            store.removePeer(peerId);
+          }
+        }
+
+        this.peerStateListeners.forEach((cb) => cb(peerId, state));
+      });
   }
 
   async startAll(): Promise<void> {
@@ -173,15 +177,18 @@ export class TransportManager {
       return;
     }
     const transport = this.transports.get(this.activeTransportType as TransportType);
-    if (transport) {
+    if (transport && this.connectedPeersByTransport.get(this.activeTransportType as TransportType)?.size! > 0) {
       await transport.broadcast(frame);
     } else {
-      // Broadcast across all connected transports if specific active transport not set
-      for (const t of this.transports.values()) {
-        try {
-          await t.broadcast(frame);
-        } catch (e) {
-          // ignore individual transport broadcast failures
+      // Broadcast across all connected transports
+      for (const [tType, t] of this.transports.entries()) {
+        const connectedCount = this.connectedPeersByTransport.get(tType)?.size || 0;
+        if (connectedCount > 0) {
+          try {
+            await t.broadcast(frame);
+          } catch (e) {
+            // ignore individual transport broadcast failures
+          }
         }
       }
     }

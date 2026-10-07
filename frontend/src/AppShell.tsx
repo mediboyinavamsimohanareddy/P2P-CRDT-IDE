@@ -36,7 +36,7 @@ export const AppShell: React.FC = () => {
   const transportManager = collabManager.getTransportManager();
 
   useEffect(() => {
-    collabManager.startSession('DB-72A91');
+    // Session is started when user explicitly creates or joins a room, or uses LAN discovery
   }, []);
 
   useEffect(() => {
