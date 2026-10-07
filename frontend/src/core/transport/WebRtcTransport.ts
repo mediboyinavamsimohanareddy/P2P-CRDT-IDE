@@ -38,6 +38,7 @@ export class WebRtcTransport implements Transport {
       this.wsUrl = wsUrl;
     } else if (typeof window !== 'undefined') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      // Use window.location.host if served through Vite dev server or backend server
       const host = window.location.host || 'localhost:8082';
       this.wsUrl = `${protocol}//${host}/ws/signaling`;
     } else {
@@ -172,7 +173,10 @@ export class WebRtcTransport implements Transport {
 
   private createPeerConnection(peerId: string): RTCPeerConnection {
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
     });
 
     pc.onicecandidate = (evt) => {

@@ -46,24 +46,7 @@ export class RoomPeerStore {
   setRoomId(roomId: string): void {
     this.roomId = roomId;
 
-    if (typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined' && process.env.NODE_ENV !== 'test') {
-      const transport = new WebRtcTransport(this.localPeerId, roomId);
-      transport.onPeerState((peerId, state) => {
-        if (state === 'connected' || state === 'connecting') {
-          this.addPeer({
-            id: peerId,
-            displayName: `Peer (${peerId.length > 8 ? peerId.substring(0, 6) : peerId})`,
-            role: 'Peer',
-            status: state === 'connected' ? 'connected' : 'connecting',
-            activity: state === 'connected' ? 'Active in session' : 'Connecting...',
-            color: '#4D96FF',
-          });
-        } else if (state === 'offline') {
-          this.removePeer(peerId);
-        }
-      });
-      transport.start();
-
+    if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'test') {
       // Poll room endpoint so peers in room registered via backend are shown
       const pollRoomPeers = async () => {
         try {

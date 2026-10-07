@@ -40,16 +40,27 @@ export class OllamaLocalProvider implements AIProvider {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
 
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const fetchOptions: RequestInit = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: controller?.signal,
         body: JSON.stringify({
           model: this.modelName,
           prompt: fullPrompt,
           stream: false,
         }),
-      });
+      };
+
+      if (controller?.signal) {
+        // Use timeout signal if available or pass controller signal without failing on undici environment mismatch
+        const signal = controller.signal;
+        if (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal && typeof (AbortSignal as unknown as { timeout?: unknown }).timeout === 'function') {
+          fetchOptions.signal = AbortSignal.timeout(5000);
+        } else {
+          fetchOptions.signal = signal;
+        }
+      }
+
+      const response = await fetch(`${this.baseUrl}/api/generate`, fetchOptions);
 
       if (timeoutId) clearTimeout(timeoutId);
 

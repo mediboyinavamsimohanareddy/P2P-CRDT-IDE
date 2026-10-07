@@ -101,6 +101,11 @@ export class CollaborationManager {
   }
 
   public async startSession(roomId: string): Promise<void> {
+    if (this.currentRoomId && this.currentRoomId !== roomId && this.isStarted) {
+      await this.transportManager.stopAll();
+      this.isStarted = false;
+    }
+
     this.currentRoomId = roomId;
     this.peerStore.setRoomId(roomId);
     this.transportManager.setWorkspaceId(roomId);
