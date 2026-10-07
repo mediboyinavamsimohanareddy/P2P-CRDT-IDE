@@ -5,6 +5,7 @@ import { YjsCrdtEngine } from '../core/crdt/CrdtEngine';
 import { CollaborationManager } from '../core/sync/CollaborationManager';
 import { SignalingConfig } from '../core/sync/SignalingConfig';
 import { createRoom, joinRoom } from '../core/sync/roomApi';
+import { SessionStatusStore } from '../core/sync/SessionStatusStore';
 
 export interface NetworkAndSyncViewProps {
   crdtEngine?: YjsCrdtEngine;
@@ -18,7 +19,8 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
   const [signalingHostInput, setSignalingHostInput] = useState('');
   const [joinError, setJoinError] = useState<string | null>(null);
   const [showJoinModal, setShowJoinModal] = useState(false);
-  const [workspaceHash, setWorkspaceHash] = useState<string>('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+  const [workspaceHash, setWorkspaceHash] = useState<string>('');
+  const [sessionStatus, setSessionStatus] = useState(SessionStatusStore.getInstance().get());
 
   useEffect(() => {
     const store = RoomPeerStore.getInstance();
@@ -39,9 +41,13 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
     });
 
     const interval = setInterval(updateHash, 2000);
+    const unsubStatus = SessionStatusStore.getInstance().subscribe(() => {
+      setSessionStatus(SessionStatusStore.getInstance().get());
+    });
 
     return () => {
       unsubscribe();
+      unsubStatus();
       clearInterval(interval);
     };
   }, [crdtEngine]);
@@ -213,18 +219,33 @@ export const NetworkAndSyncView: React.FC<NetworkAndSyncViewProps> = ({ crdtEngi
             <span className="flex items-center gap-1.5 text-gray-200">
               <ShieldCheck className="w-4 h-4 text-status-pass" /> Workspace Convergence Verification
             </span>
-            <span className="bg-status-pass/20 text-status-pass px-2 py-0.5 rounded text-[10px] font-mono font-bold">
-              CONVERGED
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                sessionStatus.converged
+                  ? 'bg-status-pass/20 text-status-pass'
+                  : 'bg-status-warn/20 text-status-warn'
+              }`}
+            >
+              {sessionStatus.converged ? 'CRDT: SYNCED' : 'CRDT: SYNCING'}
             </span>
           </div>
 
           <div className="flex flex-col gap-2 font-mono text-[11px] bg-bg-darkest p-3 rounded border border-border-subtle text-gray-300">
-            <div>Root State SHA-256:</div>
+            <div>Workspace state hash:</div>
             <div className="text-accent-mint font-bold break-all">
-              {workspaceHash}
+              {sessionStatus.localHash || workspaceHash || '—'}
             </div>
-            <div className="text-[10px] text-gray-500 pt-1">
-              ✓ All {peers.length} active CRDT state vectors identical across replicas.
+            <div>
+              Remote hash: {sessionStatus.remoteHash || 'waiting'}
+            </div>
+            <div
+              className={`text-[10px] pt-1 ${
+                sessionStatus.converged ? 'text-status-pass' : 'text-status-warn'
+              }`}
+            >
+              {sessionStatus.converged && sessionStatus.localHash && sessionStatus.localHash === sessionStatus.remoteHash
+                ? 'STATE HASH: MATCHED'
+                : 'STATE HASH: MISMATCH'}
             </div>
           </div>
         </div>

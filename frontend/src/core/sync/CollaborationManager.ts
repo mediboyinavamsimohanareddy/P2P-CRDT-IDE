@@ -12,6 +12,8 @@ import { OperationLogStore } from '../security/OperationLogStore';
 import { Frame } from '@decentraide/shared';
 import { SessionStatusStore } from './SessionStatusStore';
 import { OverlapConflictDetector } from '../merge/OverlapConflictDetector';
+import { ConvergenceVerifier } from './ConvergenceVerifier';
+import { Transport } from '../transport/Transport';
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -41,6 +43,22 @@ function newOpId(): string {
   });
 }
 
+function isEmptyYjsUpdate(update: Uint8Array): boolean {
+  if (update.byteLength === 0) return true;
+  if (update.byteLength <= 2) {
+    for (let i = 0; i < update.byteLength; i++) {
+      if (update[i] !== 0) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function yDocHasFileContent(engine: YjsCrdtEngine): boolean {
+  const keys = Array.from(engine.getDoc().share.keys());
+  return keys.some((key) => key !== 'metadata' && engine.getText(key).length > 0);
+}
+
 export class CollaborationManager {
   private static instance: CollaborationManager;
 
@@ -54,6 +72,7 @@ export class CollaborationManager {
   private projectKey: SymmetricKey;
   private membership: MembershipList;
   private unsubCrdt?: () => void;
+  private verifier: ConvergenceVerifier;
 
   private isStarted = false;
   private currentRoomId: string | null = null;
@@ -62,6 +81,8 @@ export class CollaborationManager {
   private pendingRemoteFrames: Array<{ peerId: string; bytes: Uint8Array }> = [];
   private activeFilePath: string = 'src/main/java/Main.java';
   private webrtcTransport: WebRtcTransport | null = null;
+  private connectedPeers = new Set<string>();
+  private syncStep1Sent = new Set<string>();
 
   public static getInstance(): CollaborationManager {
     if (!CollaborationManager.instance) {
@@ -73,12 +94,13 @@ export class CollaborationManager {
     return CollaborationManager.instance;
   }
 
-  constructor() {
+  constructor(options?: { peerStore?: RoomPeerStore; transportManager?: TransportManager }) {
     this.crdtEngine = new YjsCrdtEngine();
-    this.peerStore = RoomPeerStore.getInstance();
+    this.peerStore = options?.peerStore ?? RoomPeerStore.getInstance();
     this.identity = SecurityManager.generateIdentity();
     this.peerStore.setLocalPeerId(this.identity.peerId);
     this.projectKey = SecurityManager.generateSymmetricKey();
+    this.verifier = new ConvergenceVerifier(this.crdtEngine, this.identity.peerId);
 
     this.membership = {
       projectId: 'decentraide-workspace',
@@ -98,7 +120,7 @@ export class CollaborationManager {
       }
     });
 
-    this.transportManager = new TransportManager('default-workspace');
+    this.transportManager = options?.transportManager ?? new TransportManager('default-workspace');
     this.setupTransportListeners();
     this.setupCrdtListeners();
   }
@@ -135,15 +157,32 @@ export class CollaborationManager {
     return this.projectKey;
   }
 
+  public getVerifier(): ConvergenceVerifier {
+    return this.verifier;
+  }
+
   public setActiveFilePath(filePath: string): void {
     this.activeFilePath = filePath;
     OverlapConflictDetector.getInstance().setFilePath(filePath);
   }
 
-  public async startSession(roomId: string, options?: { isHost?: boolean }): Promise<void> {
-    if (this.currentRoomId && this.currentRoomId !== roomId && this.isStarted) {
+  public registerSyncTransport(transport: Transport): void {
+    this.transportManager.registerTransport(transport);
+    this.isStarted = true;
+  }
+
+  public async startSession(
+    roomId: string,
+    options?: { isHost?: boolean; skipDefaultTransports?: boolean }
+  ): Promise<void> {
+    const previousRoomId = this.currentRoomId;
+    const switchingRoom = previousRoomId !== null && previousRoomId !== roomId;
+
+    if (switchingRoom && this.isStarted) {
       await this.transportManager.stopAll();
       this.isStarted = false;
+      this.connectedPeers.clear();
+      this.syncStep1Sent.clear();
     }
 
     this.isHost = !!options?.isHost;
@@ -164,26 +203,34 @@ export class CollaborationManager {
       isHost: this.isHost,
       iceFailedReason: null,
       converged: false,
+      localHash: this.crdtEngine.computeWorkspaceHash(),
+      remoteHash: null,
     });
 
-    this.crdtEngine.reset();
-    this.setupCrdtListeners();
+    if (switchingRoom) {
+      this.crdtEngine.reset();
+      this.setupCrdtListeners();
+      this.opLogManager.clearPending();
+      this.verifier = new ConvergenceVerifier(this.crdtEngine, this.identity.peerId);
+    }
 
     if (!this.isStarted) {
-      const localId = this.peerStore.getLocalPeerId();
+      if (!options?.skipDefaultTransports) {
+        const localId = this.peerStore.getLocalPeerId();
 
-      const webrtc = new WebRtcTransport(localId, roomId);
-      this.webrtcTransport = webrtc;
-      webrtc.onIceFailed((_peerId, reason) => {
-        SessionStatusStore.getInstance().patch({ phase: 'ice-failed', iceFailedReason: reason });
-      });
-      this.transportManager.registerTransport(webrtc);
+        const webrtc = new WebRtcTransport(localId, roomId);
+        this.webrtcTransport = webrtc;
+        webrtc.onIceFailed((_peerId, reason) => {
+          SessionStatusStore.getInstance().patch({ phase: 'ice-failed', iceFailedReason: reason });
+        });
+        this.transportManager.registerTransport(webrtc);
 
-      const lan = new LanTransport(localId, roomId, `Peer (${localId.substring(0, 6)})`);
-      this.transportManager.registerTransport(lan);
+        const lan = new LanTransport(localId, roomId, `Peer (${localId.substring(0, 6)})`);
+        this.transportManager.registerTransport(lan);
 
-      const bt = new WebBluetoothTransport(localId);
-      this.transportManager.registerTransport(bt);
+        const bt = new WebBluetoothTransport(localId);
+        this.transportManager.registerTransport(bt);
+      }
 
       await this.transportManager.startAll();
       this.isStarted = true;
@@ -191,12 +238,14 @@ export class CollaborationManager {
 
     SessionStatusStore.getInstance().patch({ phase: 'connecting' });
 
-    const savedSnapshot = await this.persistenceManager.getCrdtSnapshot(roomId);
-    if (savedSnapshot && savedSnapshot.length > 0) {
-      try {
-        this.crdtEngine.applyUpdate(savedSnapshot, 'local-persistence');
-      } catch (e) {
-        console.warn('[CollaborationManager] Could not load saved snapshot:', e);
+    if (!yDocHasFileContent(this.crdtEngine)) {
+      const savedSnapshot = await this.persistenceManager.getCrdtSnapshot(roomId);
+      if (savedSnapshot && savedSnapshot.length > 0) {
+        try {
+          this.crdtEngine.applyUpdate(savedSnapshot, 'local-persistence');
+        } catch (e) {
+          console.warn('[CollaborationManager] Could not load saved snapshot:', e);
+        }
       }
     }
   }
@@ -236,7 +285,7 @@ export class CollaborationManager {
           return;
         }
 
-        this.applySecuredFrame(peerId, frameObj);
+        this.applySecuredFrame(peerId, frameObj, frameBytes);
       } catch (e) {
         console.warn('[CollaborationManager] Frame processing error:', e);
       }
@@ -244,16 +293,26 @@ export class CollaborationManager {
 
     this.transportManager.onPeerState((peerId, state) => {
       if (state === 'connecting') {
-        SessionStatusStore.getInstance().patch({ phase: 'connecting' });
+        SessionStatusStore.getInstance().patch({ phase: 'connecting', converged: false });
       }
       if (state === 'connected') {
+        this.connectedPeers.add(peerId);
+        this.syncStep1Sent.delete(peerId);
         const phase = this.transportManager.getActiveTransportType() === 'lan' ? 'lan-relay' : 'connected';
-        SessionStatusStore.getInstance().patch({ phase });
+        SessionStatusStore.getInstance().patch({ phase, converged: false });
         this.sendHello(peerId);
         if (this.hasRoomKey) {
-          this.sendStateVectorToPeer(peerId);
-          this.flushPendingOfflineOps();
+          this.sendSyncStep1(peerId);
+          this.opLogManager.clearPending();
         }
+      }
+      if (state === 'offline') {
+        this.connectedPeers.delete(peerId);
+        this.syncStep1Sent.delete(peerId);
+        SessionStatusStore.getInstance().patch({
+          converged: false,
+          phase: this.connectedPeers.size === 0 ? 'local' : SessionStatusStore.getInstance().get().phase,
+        });
       }
     });
 
@@ -261,7 +320,7 @@ export class CollaborationManager {
       if (type === 'lan') {
         SessionStatusStore.getInstance().patch({ phase: 'lan-relay' });
       } else if (type === 'local') {
-        SessionStatusStore.getInstance().patch({ phase: 'local' });
+        SessionStatusStore.getInstance().patch({ phase: 'local', converged: false });
       }
     });
   }
@@ -275,8 +334,14 @@ export class CollaborationManager {
 
     if (msg.type === 'PEER_HELLO' && typeof msg.peerId === 'string' && typeof msg.publicKeyPem === 'string') {
       this.securityPipeline.addMember(msg.peerId, msg.publicKeyPem, 'Developer');
+      if (this.hasRoomKey) {
+        this.flushPendingFramesForPeer(peerId);
+      }
       if (this.isHost && this.hasRoomKey) {
         this.sendKeyDistribute(peerId);
+      }
+      if (this.hasRoomKey) {
+        this.sendSyncStep1(peerId);
       }
       return true;
     }
@@ -285,60 +350,108 @@ export class CollaborationManager {
       this.projectKey = SecurityManager.keyFromBase64(msg.keyB64);
       this.securityPipeline.setProjectKey(this.projectKey);
       this.hasRoomKey = true;
-      for (const pending of this.pendingRemoteFrames) {
+      const queued = this.pendingRemoteFrames;
+      this.pendingRemoteFrames = [];
+      for (const pending of queued) {
         try {
           const parsed = JSON.parse(new TextDecoder().decode(pending.bytes));
-          this.applySecuredFrame(pending.peerId, parsed);
+          this.applySecuredFrame(pending.peerId, parsed, pending.bytes);
         } catch {
           // skip
         }
       }
-      this.pendingRemoteFrames = [];
-      this.sendStateVectorToPeer(peerId);
-      this.flushPendingOfflineOps();
+      this.sendSyncStep1(peerId);
+      this.opLogManager.clearPending();
       return true;
     }
 
     if (msg.type === 'HASH_ANNOUNCE' && typeof msg.hash === 'string') {
-      const localHash = this.crdtEngine.computeWorkspaceHash();
-      const converged = localHash === msg.hash;
-      SessionStatusStore.getInstance().patch({
-        remoteHash: msg.hash,
-        localHash,
-        converged,
-        phase: converged ? 'verified' : SessionStatusStore.getInstance().get().phase,
-      });
+      const from = typeof msg.from === 'string' ? msg.from : peerId;
+      this.verifier.recordRemoteHash(from, msg.hash);
+      this.publishConvergence();
       return true;
     }
 
     return false;
   }
 
-  private applySecuredFrame(peerId: string, frameObj: unknown): void {
+  private flushPendingFramesForPeer(peerId: string): void {
+    const remaining: Array<{ peerId: string; bytes: Uint8Array }> = [];
+    for (const pending of this.pendingRemoteFrames) {
+      if (pending.peerId !== peerId && peerId !== '*') {
+        remaining.push(pending);
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(new TextDecoder().decode(pending.bytes));
+        this.applySecuredFrame(pending.peerId, parsed, pending.bytes);
+      } catch {
+        // skip
+      }
+    }
+    this.pendingRemoteFrames = remaining;
+  }
+
+  private applySecuredFrame(peerId: string, frameObj: unknown, rawBytes?: Uint8Array): void {
     const result = this.securityPipeline.processIncomingFrame(frameObj);
-    if (result.success && result.decryptedPayload) {
-      const payloadObj = JSON.parse(result.decryptedPayload);
-      if (payloadObj.u) {
-        const updateBytes = base64ToUint8Array(payloadObj.u);
-        this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
-        OperationLogStore.getInstance().logAppliedOp(peerId, 'UPDATE', payloadObj.filePath || this.activeFilePath);
+    if (!result.success) {
+      if (result.reason === 'Not a member' && rawBytes) {
+        this.pendingRemoteFrames.push({ peerId, bytes: rawBytes });
+      }
+      return;
+    }
+    if (!result.decryptedPayload) return;
+
+    let payloadObj: Record<string, unknown>;
+    try {
+      payloadObj = JSON.parse(result.decryptedPayload) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+
+    if (result.type === 'crdt.syncStep1' && typeof payloadObj.sv === 'string') {
+      this.replySyncStep2(peerId, base64ToUint8Array(payloadObj.sv));
+      if (!this.syncStep1Sent.has(peerId)) {
+        this.sendSyncStep1(peerId);
+      }
+      return;
+    }
+
+    if (
+      (result.type === 'crdt.syncStep2' || result.type === 'crdt.update') &&
+      typeof payloadObj.u === 'string'
+    ) {
+      const updateBytes = base64ToUint8Array(payloadObj.u);
+      if (isEmptyYjsUpdate(updateBytes)) return;
+
+      this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
+      OperationLogStore.getInstance().logAppliedOp(
+        peerId,
+        'UPDATE',
+        (typeof payloadObj.filePath === 'string' ? payloadObj.filePath : null) || this.activeFilePath
+      );
+
+      if (result.type === 'crdt.update') {
+        const filePath =
+          (typeof payloadObj.filePath === 'string' ? payloadObj.filePath : null) || this.activeFilePath;
         OverlapConflictDetector.getInstance().noteRemoteEdit(
           peerId,
-          payloadObj.filePath || this.activeFilePath,
-          this.crdtEngine.getText(payloadObj.filePath || this.activeFilePath).toString()
+          filePath,
+          this.crdtEngine.getText(filePath).toString()
         );
-        this.saveSnapshotDebounced();
-        this.announceHash();
       }
+
+      this.saveSnapshotDebounced();
+      this.announceHash();
     }
   }
 
   private setupCrdtListeners(): void {
     this.unsubCrdt?.();
     this.unsubCrdt = this.crdtEngine.onUpdate((update, origin) => {
-      if (origin.startsWith('remote') || origin === 'local-persistence') return;
+      const originTag = typeof origin === 'string' ? origin : '';
+      if (originTag.startsWith('remote') || originTag === 'local-persistence') return;
 
-      this.opLogManager.enqueueLocalUpdate(update);
       this.saveSnapshotDebounced();
       OverlapConflictDetector.getInstance().noteLocalEdit(
         this.identity.peerId,
@@ -346,14 +459,19 @@ export class CollaborationManager {
         this.crdtEngine.getText(this.activeFilePath).toString()
       );
 
-      if (!this.hasRoomKey) return;
+      if (!this.hasRoomKey || this.connectedPeers.size === 0) {
+        this.opLogManager.enqueueLocalUpdate(update);
+        return;
+      }
 
       const payloadObj = {
         u: uint8ArrayToBase64(update),
         filePath: this.activeFilePath,
       };
       const frameBytes = this.sealFrame('crdt.update', payloadObj);
-      this.transportManager.broadcast(frameBytes).catch(() => {});
+      this.transportManager.broadcast(frameBytes).catch(() => {
+        this.opLogManager.enqueueLocalUpdate(update);
+      });
     });
   }
 
@@ -377,26 +495,55 @@ export class CollaborationManager {
     this.transportManager.send(peerId, new TextEncoder().encode(JSON.stringify(msg))).catch(() => {});
   }
 
-  private sendStateVectorToPeer(peerId: string): void {
+  private sendSyncStep1(peerId: string): void {
     if (!this.hasRoomKey) return;
     try {
-      const stateUpdate = this.crdtEngine.encodeStateAsUpdate();
+      const sv = this.crdtEngine.encodeStateVector();
+      const payloadObj = { sv: uint8ArrayToBase64(sv) };
+      const frameBytes = this.sealFrame('crdt.syncStep1', payloadObj);
+      this.transportManager.send(peerId, frameBytes).catch(() => {});
+      this.syncStep1Sent.add(peerId);
+    } catch (e) {
+      console.warn('[CollaborationManager] Failed to send syncStep1 to peer:', peerId, e);
+    }
+  }
+
+  private replySyncStep2(peerId: string, remoteStateVector: Uint8Array): void {
+    if (!this.hasRoomKey) return;
+    try {
+      const diff = this.crdtEngine.encodeStateAsUpdate(remoteStateVector);
+      if (isEmptyYjsUpdate(diff)) return;
       const payloadObj = {
-        u: uint8ArrayToBase64(stateUpdate),
+        u: uint8ArrayToBase64(diff),
         filePath: this.activeFilePath,
       };
       const frameBytes = this.sealFrame('crdt.syncStep2', payloadObj);
       this.transportManager.send(peerId, frameBytes).catch(() => {});
     } catch (e) {
-      console.warn('[CollaborationManager] Failed to send state vector to peer:', peerId, e);
+      console.warn('[CollaborationManager] Failed to send syncStep2 to peer:', peerId, e);
     }
   }
 
   private announceHash(): void {
-    const hash = this.crdtEngine.computeWorkspaceHash();
+    const hash = this.verifier.getLocalHash();
     SessionStatusStore.getInstance().patch({ localHash: hash });
+    this.publishConvergence();
     const msg = { type: 'HASH_ANNOUNCE', hash, from: this.identity.peerId };
     this.transportManager.broadcast(new TextEncoder().encode(JSON.stringify(msg))).catch(() => {});
+  }
+
+  private publishConvergence(): void {
+    const localHash = this.verifier.getLocalHash();
+    const hashes = this.verifier.getPeerHashes();
+    const remote = hashes.find((h) => !h.peerId.includes('(You)'));
+    const hashesMatch = this.verifier.hashesMatchPeers();
+    const connected = this.connectedPeers.size > 0;
+    SessionStatusStore.getInstance().patch({
+      localHash,
+      remoteHash: remote?.hash ?? SessionStatusStore.getInstance().get().remoteHash,
+      converged: connected && hashesMatch,
+      phase: connected && hashesMatch ? 'verified' : SessionStatusStore.getInstance().get().phase,
+    });
   }
 
   private sealFrame(type: Frame['type'], payloadObj: unknown): Uint8Array {
@@ -416,22 +563,6 @@ export class CollaborationManager {
       sig: signature,
     };
     return new TextEncoder().encode(JSON.stringify(frame));
-  }
-
-  private flushPendingOfflineOps(): void {
-    this.opLogManager.flushQueue((op) => {
-      try {
-        const payloadObj = {
-          u: uint8ArrayToBase64(op.update),
-          filePath: this.activeFilePath,
-        };
-        const frameBytes = this.sealFrame('crdt.update', payloadObj);
-        this.transportManager.broadcast(frameBytes);
-        return true;
-      } catch {
-        return false;
-      }
-    });
   }
 
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;

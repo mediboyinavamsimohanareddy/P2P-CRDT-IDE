@@ -11,6 +11,10 @@
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
+    "lucide-react": "^1.52.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "yjs": "^13.6.33",
     "zod": "^3.22.4"
   },
   "devDependencies": {

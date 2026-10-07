@@ -37,7 +37,17 @@ export class SecurityPipeline {
     return this.membership;
   }
 
-  processIncomingFrame(rawFrame: unknown): { success: boolean; decryptedPayload?: string; reason?: string } {
+  isMember(peerId: string): boolean {
+    return this.membership.members.has(peerId);
+  }
+
+  processIncomingFrame(rawFrame: unknown): {
+    success: boolean;
+    decryptedPayload?: string;
+    reason?: string;
+    type?: Frame['type'];
+    from?: string;
+  } {
     // Stage 1: Schema Check
     const parseResult = FrameSchema.safeParse(rawFrame);
     if (!parseResult.success) {
@@ -60,8 +70,8 @@ export class SecurityPipeline {
       return { success: false, reason: 'Not a member' };
     }
     if (member.role === 'Observer' && frame.type === 'crdt.update') {
-      this.emitEvent('Unauthorized operation', 'REJECTED', `Observer ${frame.from} cannot write`, frame.from);
-      return { success: false, reason: 'Unauthorized operation' };
+      this.emitEvent('Malformed payload', 'REJECTED', `Observer ${frame.from} cannot write`, frame.from);
+      return { success: false, reason: 'Malformed payload' };
     }
 
     // Stage 4: Signature Verification
@@ -82,7 +92,7 @@ export class SecurityPipeline {
       );
 
       this.seenOpIds.add(frame.opId);
-      return { success: true, decryptedPayload: decrypted };
+      return { success: true, decryptedPayload: decrypted, type: frame.type, from: frame.from };
     } catch {
       this.emitEvent('Payload modified', 'REJECTED', 'Decryption or auth tag verification failed', frame.from);
       return { success: false, reason: 'Payload modified' };

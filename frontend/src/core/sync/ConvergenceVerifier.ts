@@ -48,4 +48,13 @@ export class ConvergenceVerifier {
     }
     return true;
   }
+
+  hashesMatchPeers(): boolean {
+    if (this.remoteHashes.size === 0) return false;
+    return this.isConverged();
+  }
+
+  clearRemoteHashes(): void {
+    this.remoteHashes.clear();
+  }
 }

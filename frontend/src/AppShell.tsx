@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { ProjectBar } from './components/ProjectBar';
 import { LeftSidebar } from './components/LeftSidebar';
@@ -14,6 +14,7 @@ import { StatusBar } from './components/StatusBar';
 import { useEditorTabs } from './hooks/useEditorTabs';
 import { useFileSystem } from './hooks/useFileSystem';
 import { CollaborationManager } from './core/sync/CollaborationManager';
+import { CrdtMonacoBinding } from './core/crdt/CrdtMonacoBinding';
 
 export const AppShell: React.FC = () => {
   const [activeView, setActiveView] = useState<
@@ -34,6 +35,7 @@ export const AppShell: React.FC = () => {
   const collabManager = CollaborationManager.getInstance();
   const crdtEngine = collabManager.getCrdtEngine();
   const transportManager = collabManager.getTransportManager();
+  const bindingsRef = useRef<Map<string, CrdtMonacoBinding>>(new Map());
 
   useEffect(() => {
     // Session is started when user explicitly creates or joins a room, or uses LAN discovery
@@ -43,41 +45,32 @@ export const AppShell: React.FC = () => {
     if (!activeTab) return;
     collabManager.setActiveFilePath(activeTab.filePath);
 
-    // Sync active file text into Yjs
-    const ytext = crdtEngine.getText(activeTab.filePath);
-    if (ytext.toString().length === 0 && activeTab.content) {
-      crdtEngine.getDoc().transact(() => {
-        ytext.insert(0, activeTab.content);
-      }, 'app-init');
+    let binding = bindingsRef.current.get(activeTab.filePath);
+    if (!binding) {
+      binding = new CrdtMonacoBinding(crdtEngine, activeTab.filePath);
+      bindingsRef.current.set(activeTab.filePath, binding);
     }
 
-    // Subscribe to remote Yjs updates
-    const unsubscribe = crdtEngine.onUpdate((_update, origin) => {
-      if (origin.startsWith('remote')) {
-        const remoteText = ytext.toString();
-        if (remoteText && remoteText !== activeTab.content) {
-          updateTabContent(activeTab.id, remoteText);
-        }
-      }
-    });
+    const unbind = binding.bind(
+      () => activeTab.content,
+      (val) => updateTabContent(activeTab.id, val)
+    );
 
     return () => {
-      unsubscribe();
+      unbind();
     };
   }, [activeTab?.id, activeTab?.filePath]);
 
   const handleContentChange = (tabId: string, newContent: string) => {
     updateTabContent(tabId, newContent);
     const tab = tabs.find((t) => t.id === tabId);
-    if (tab) {
-      const ytext = crdtEngine.getText(tab.filePath);
-      if (ytext.toString() !== newContent) {
-        crdtEngine.getDoc().transact(() => {
-          ytext.delete(0, ytext.length);
-          ytext.insert(0, newContent);
-        }, 'monaco-user-type');
-      }
+    if (!tab) return;
+    let binding = bindingsRef.current.get(tab.filePath);
+    if (!binding) {
+      binding = new CrdtMonacoBinding(crdtEngine, tab.filePath);
+      bindingsRef.current.set(tab.filePath, binding);
     }
+    binding.handleEditorChange(newContent);
   };
 
   const handleNewFile = () => {
@@ -128,7 +121,7 @@ export const AppShell: React.FC = () => {
                 activeCode={activeTab?.content}
                 onApplyResolvedCode={(resolvedCode) => {
                   if (activeTab) {
-                    updateTabContent(activeTab.id, resolvedCode);
+                    handleContentChange(activeTab.id, resolvedCode);
                   }
                 }}
               />
@@ -139,7 +132,7 @@ export const AppShell: React.FC = () => {
                 activeCode={activeTab?.content}
                 onApplyFix={(fixedCode) => {
                   if (activeTab) {
-                    updateTabContent(activeTab.id, fixedCode);
+                    handleContentChange(activeTab.id, fixedCode);
                   }
                 }}
               />

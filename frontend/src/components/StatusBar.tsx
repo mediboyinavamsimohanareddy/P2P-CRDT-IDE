@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Wifi, ArrowDownUp, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { Wifi, ArrowDownUp, CheckCircle2 } from 'lucide-react';
 import { TransportManager } from '../core/transport/TransportManager';
+import { SessionStatusStore } from '../core/sync/SessionStatusStore';
 
 export interface StatusBarProps {
   transportManager?: TransportManager;
@@ -8,7 +9,9 @@ export interface StatusBarProps {
 
 export const StatusBar: React.FC<StatusBarProps> = ({ transportManager }) => {
   const [activeTransport, setActiveTransport] = useState<string>('WebRTC');
-  const [stats, setStats] = useState({ rttMs: 18, bytesIn: 1024, bytesOut: 2048 });
+  const [stats, setStats] = useState({ rttMs: 0, bytesIn: 0, bytesOut: 0 });
+  const [syncLabel, setSyncLabel] = useState('CRDT: LOCAL');
+  const [hashLabel, setHashLabel] = useState('STATE HASH: —');
 
   useEffect(() => {
     if (!transportManager) return;
@@ -30,6 +33,22 @@ export const StatusBar: React.FC<StatusBarProps> = ({ transportManager }) => {
     return () => clearInterval(interval);
   }, [transportManager]);
 
+  useEffect(() => {
+    const apply = () => {
+      const s = SessionStatusStore.getInstance().get();
+      setSyncLabel(s.converged ? 'CRDT: SYNCED' : s.phase === 'local' ? 'CRDT: LOCAL' : 'CRDT: SYNCING');
+      if (s.localHash && s.remoteHash && s.localHash === s.remoteHash) {
+        setHashLabel('STATE HASH: MATCHED');
+      } else if (s.remoteHash) {
+        setHashLabel('STATE HASH: MISMATCH');
+      } else {
+        setHashLabel('STATE HASH: WAITING');
+      }
+    };
+    apply();
+    return SessionStatusStore.getInstance().subscribe(apply);
+  }, []);
+
   return (
     <div
       data-testid="status-bar"
@@ -46,7 +65,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({ transportManager }) => {
         </div>
         <div className="flex items-center gap-1.5 cursor-pointer hover:bg-black/10 px-1.5 py-0.5 rounded">
           <CheckCircle2 className="w-3 h-3" />
-          <span>Offline-ready · local-first</span>
+          <span>{syncLabel}</span>
+        </div>
+        <div className="flex items-center gap-1.5 cursor-pointer hover:bg-black/10 px-1.5 py-0.5 rounded">
+          <span>{hashLabel}</span>
         </div>
       </div>
 

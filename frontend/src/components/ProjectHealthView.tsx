@@ -1,7 +1,20 @@
-import React from 'react';
-import { Heart, CheckCircle2, ShieldCheck, Cpu, HardDrive, RefreshCw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Heart, RefreshCw } from 'lucide-react';
+import { SessionStatusStore } from '../core/sync/SessionStatusStore';
 
 export const ProjectHealthView: React.FC = () => {
+  const [status, setStatus] = useState(SessionStatusStore.getInstance().get());
+
+  useEffect(() => {
+    return SessionStatusStore.getInstance().subscribe(() => {
+      setStatus(SessionStatusStore.getInstance().get());
+    });
+  }, []);
+
+  const hashesMatch = !!(status.localHash && status.remoteHash && status.localHash === status.remoteHash);
+  const crdtLabel = status.converged ? 'SYNCED' : 'SYNCING';
+  const hashLabel = hashesMatch ? 'MATCHED' : status.remoteHash ? 'MISMATCH' : 'WAITING';
+
   return (
     <div className="flex-1 bg-bg-darkest text-gray-200 p-6 flex flex-col gap-6 overflow-y-auto font-sans">
       <div className="flex items-center justify-between border-b border-border-subtle pb-4">
@@ -25,17 +38,29 @@ export const ProjectHealthView: React.FC = () => {
         <div className="bg-bg-dark border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
           <div className="flex justify-between items-center font-bold text-gray-200 border-b border-border-subtle pb-2">
             <span>CRDT Replica Engine</span>
-            <span className="text-status-pass font-mono font-bold">HEALTHY</span>
+            <span className={`font-mono font-bold ${status.converged ? 'text-status-pass' : 'text-status-warn'}`}>
+              CRDT: {crdtLabel}
+            </span>
           </div>
-          <p className="text-gray-400 text-[11px]">Yjs Y.Doc active. Canonical workspace SHA-256 state vector matches active peers.</p>
+          <p className="text-gray-400 text-[11px]">
+            Local hash: {status.localHash || '—'}
+          </p>
+          <p className="text-gray-400 text-[11px]">
+            Remote hash: {status.remoteHash || 'waiting'}
+          </p>
+          <p className={`text-[11px] font-mono font-bold ${hashesMatch ? 'text-status-pass' : 'text-status-warn'}`}>
+            STATE HASH: {hashLabel}
+          </p>
         </div>
 
         <div className="bg-bg-dark border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
           <div className="flex justify-between items-center font-bold text-gray-200 border-b border-border-subtle pb-2">
             <span>P2P WebRTC DataChannel Mesh</span>
-            <span className="text-status-pass font-mono font-bold">HEALTHY</span>
+            <span className="text-status-pass font-mono font-bold">
+              {status.phase === 'connected' || status.phase === 'verified' ? 'OPEN' : status.phase.toUpperCase()}
+            </span>
           </div>
-          <p className="text-gray-400 text-[11px]">Direct peer transport online. Zero server-mediated code relay.</p>
+          <p className="text-gray-400 text-[11px]">Direct peer transport. Sync uses the existing DataChannel only.</p>
         </div>
 
         <div className="bg-bg-dark border border-border-subtle rounded-lg p-4 flex flex-col gap-2">

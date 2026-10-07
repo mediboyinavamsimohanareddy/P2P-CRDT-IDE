@@ -128,6 +128,13 @@ export class TransportManager {
     return this.activeTransportType;
   }
 
+  hasConnectedPeers(): boolean {
+    for (const peers of this.connectedPeersByTransport.values()) {
+      if (peers.size > 0) return true;
+    }
+    return false;
+  }
+
   getTransport(type: TransportType): Transport | undefined {
     return this.transports.get(type);
   }

@@ -12,9 +12,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@decentraide/shared": "*",
+    "@decentraide/shared": "file:./shared",
     "@monaco-editor/react": "^4.7.0",
     "@xterm/addon-fit": "^0.11.0",
+    "i": "^0.3.7",
     "lucide-react": "^1.52.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

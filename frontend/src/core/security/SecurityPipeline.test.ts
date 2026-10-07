@@ -51,6 +51,8 @@ describe('SecurityPipeline (threat model defenses)', () => {
 
     expect(res.success).toBe(true);
     expect(res.decryptedPayload).toBe('valid-crdt-op');
+    expect(res.type).toBe('crdt.update');
+    expect(res.from).toBe(devIdentity.peerId);
   });
 
   it('rejects forged frame (invalid signature)', () => {
