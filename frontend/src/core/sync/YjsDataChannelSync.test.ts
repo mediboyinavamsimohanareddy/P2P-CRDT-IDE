@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { CollaborationManager } from './CollaborationManager';
-import { Transport, PeerStateCallback, FrameCallback } from '../transport/Transport';
+import { Transport } from '../transport/Transport';
 import { YjsCrdtEngine } from '../crdt/CrdtEngine';
 import { SecurityManager } from '../security/SecurityManager';
 import { Frame } from '@decentraide/shared';
@@ -8,19 +8,25 @@ import { Frame } from '@decentraide/shared';
 class FakeTransport implements Transport {
   public id: 'webrtc' | 'lan' | 'bluetooth' = 'webrtc';
   public type: 'webrtc' | 'lan' | 'bluetooth' | 'local' = 'webrtc';
-  public onFrameCb?: FrameCallback;
-  public onPeerStateCb?: PeerStateCallback;
+  public onFrameCb?: (peerId: string, data: Uint8Array) => void;
+  public onPeerStateCb?: (peerId: string, state: 'connected' | 'connecting' | 'offline') => void;
   public sentFrames: Array<{ peerId: string; bytes: Uint8Array }> = [];
   public broadcastFrames: Uint8Array[] = [];
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
+  async connect(): Promise<void> {}
+  async disconnect(): Promise<void> {}
 
-  onFrame(callback: FrameCallback): void {
+  stats() {
+    return { bytesIn: 0, bytesOut: 0, rttMs: 10 };
+  }
+
+  onFrame(callback: (peerId: string, data: Uint8Array) => void): void {
     this.onFrameCb = callback;
   }
 
-  onPeerState(callback: PeerStateCallback): void {
+  onPeerState(callback: (peerId: string, state: 'connected' | 'connecting' | 'offline') => void): void {
     this.onPeerStateCb = callback;
   }
 
