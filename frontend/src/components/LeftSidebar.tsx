@@ -58,11 +58,12 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
 
   const handleCreateRoom = async () => {
     let newRoomId = 'DB-72A91';
+    const localPeerId = RoomPeerStore.getInstance().getLocalPeerId();
     try {
       const res = await fetch('/api/rooms/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'DecentraBank', peerId: 'peer-arjun-01' }),
+        body: JSON.stringify({ name: 'DecentraBank', peerId: localPeerId }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -86,6 +87,17 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ onOpenFile, activeView
   const handleJoinRoom = async () => {
     if (!inputRoomId.trim()) return;
     const cleanRoomId = inputRoomId.trim().toUpperCase();
+    const localPeerId = RoomPeerStore.getInstance().getLocalPeerId();
+    try {
+      await fetch('/api/rooms/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: cleanRoomId, peerId: localPeerId }),
+      });
+    } catch {
+      // Fallback
+    }
+
     RoomPeerStore.getInstance().setRoomId(cleanRoomId);
     setShowInviteModal(false);
     setInputRoomId('');

@@ -46,13 +46,13 @@ export class RoomPeerStore {
     if (typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined' && process.env.NODE_ENV !== 'test') {
       const transport = new WebRtcTransport(this.localPeerId, roomId);
       transport.onPeerState((peerId, state) => {
-        if (state === 'connected') {
+        if (state === 'connected' || state === 'connecting') {
           this.addPeer({
             id: peerId,
             displayName: `Peer (${peerId.substring(0, 6)})`,
             role: 'Peer',
-            status: 'connected',
-            activity: 'Active in session',
+            status: state === 'connected' ? 'connected' : 'connecting',
+            activity: state === 'connected' ? 'Active in session' : 'Connecting...',
             color: '#4D96FF',
           });
         } else if (state === 'offline') {
@@ -60,6 +60,35 @@ export class RoomPeerStore {
         }
       });
       transport.start();
+
+      // Poll room endpoint so peers in room registered via backend are shown
+      const pollRoomPeers = async () => {
+        try {
+          const res = await fetch(`/api/rooms/${roomId}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.peers)) {
+              data.peers.forEach((pId: string) => {
+                if (pId !== this.localPeerId) {
+                  this.addPeer({
+                    id: pId,
+                    displayName: `Peer (${pId.length > 8 ? pId.substring(5, 11) : pId})`,
+                    role: 'Peer',
+                    status: 'connected',
+                    activity: 'Connected in room',
+                    color: '#4D96FF',
+                  });
+                }
+              });
+            }
+          }
+        } catch {
+          // Fallback
+        }
+      };
+
+      pollRoomPeers();
+      setInterval(pollRoomPeers, 3000);
     }
 
     this.notify();
