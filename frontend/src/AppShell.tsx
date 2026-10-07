@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { ProjectBar } from './components/ProjectBar';
 import { LeftSidebar } from './components/LeftSidebar';
@@ -14,6 +14,7 @@ import { StatusBar } from './components/StatusBar';
 import { useEditorTabs } from './hooks/useEditorTabs';
 import { useFileSystem } from './hooks/useFileSystem';
 import { CollaborationManager } from './core/sync/CollaborationManager';
+import { CrdtMonacoBinding } from './core/crdt/CrdtMonacoBinding';
 
 export const AppShell: React.FC = () => {
   const [activeView, setActiveView] = useState<
@@ -35,6 +36,8 @@ export const AppShell: React.FC = () => {
   const crdtEngine = collabManager.getCrdtEngine();
   const transportManager = collabManager.getTransportManager();
 
+  const bindingRef = useRef<CrdtMonacoBinding | null>(null);
+
   useEffect(() => {
     // Session is started when user explicitly creates or joins a room, or uses LAN discovery
   }, []);
@@ -43,40 +46,27 @@ export const AppShell: React.FC = () => {
     if (!activeTab) return;
     collabManager.setActiveFilePath(activeTab.filePath);
 
-    // Sync active file text into Yjs
-    const ytext = crdtEngine.getText(activeTab.filePath);
-    if (ytext.toString().length === 0 && activeTab.content) {
-      crdtEngine.getDoc().transact(() => {
-        ytext.insert(0, activeTab.content);
-      }, 'app-init');
-    }
-
-    // Subscribe to remote Yjs updates
-    const unsubscribe = crdtEngine.onUpdate((_update, origin) => {
-      if (origin.startsWith('remote')) {
-        const remoteText = ytext.toString();
-        if (remoteText && remoteText !== activeTab.content) {
-          updateTabContent(activeTab.id, remoteText);
-        }
+    const binding = new CrdtMonacoBinding(crdtEngine, activeTab.filePath);
+    const unbind = binding.bind(
+      () => activeTab.content,
+      (newVal) => {
+        updateTabContent(activeTab.id, newVal);
       }
-    });
+    );
+
+    bindingRef.current = binding;
 
     return () => {
-      unsubscribe();
+      unbind();
+      binding.destroy();
+      bindingRef.current = null;
     };
   }, [activeTab?.id, activeTab?.filePath]);
 
   const handleContentChange = (tabId: string, newContent: string) => {
     updateTabContent(tabId, newContent);
-    const tab = tabs.find((t) => t.id === tabId);
-    if (tab) {
-      const ytext = crdtEngine.getText(tab.filePath);
-      if (ytext.toString() !== newContent) {
-        crdtEngine.getDoc().transact(() => {
-          ytext.delete(0, ytext.length);
-          ytext.insert(0, newContent);
-        }, 'monaco-user-type');
-      }
+    if (activeTab && activeTab.id === tabId && bindingRef.current) {
+      bindingRef.current.handleEditorChange(newContent);
     }
   };
 

@@ -12,6 +12,7 @@ import { OperationLogStore } from '../security/OperationLogStore';
 import { Frame } from '@decentraide/shared';
 import { SessionStatusStore } from './SessionStatusStore';
 import { OverlapConflictDetector } from '../merge/OverlapConflictDetector';
+import { ConvergenceVerifier } from './ConvergenceVerifier';
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -50,6 +51,7 @@ export class CollaborationManager {
   private persistenceManager: LocalPersistenceManager;
   private opLogManager: OpLogManager;
   private securityPipeline: SecurityPipeline;
+  private convergenceVerifier: ConvergenceVerifier;
   private identity: CryptoIdentity;
   private projectKey: SymmetricKey;
   private membership: MembershipList;
@@ -59,7 +61,7 @@ export class CollaborationManager {
   private currentRoomId: string | null = null;
   private isHost = false;
   private hasRoomKey = false;
-  private pendingRemoteFrames: Array<{ peerId: string; bytes: Uint8Array }> = [];
+  private pendingRemoteFrames: Array<{ peerId: string; frameObj: unknown }> = [];
   private activeFilePath: string = 'src/main/java/Main.java';
   private webrtcTransport: WebRtcTransport | null = null;
 
@@ -91,6 +93,7 @@ export class CollaborationManager {
 
     this.persistenceManager = new LocalPersistenceManager('workspace');
     this.opLogManager = new OpLogManager(this.crdtEngine, this.persistenceManager);
+    this.convergenceVerifier = new ConvergenceVerifier(this.crdtEngine, this.identity.peerId);
 
     this.securityPipeline = new SecurityPipeline(this.membership, this.projectKey, (evt) => {
       if (evt.status === 'REJECTED') {
@@ -135,13 +138,19 @@ export class CollaborationManager {
     return this.projectKey;
   }
 
+  public getConvergenceVerifier(): ConvergenceVerifier {
+    return this.convergenceVerifier;
+  }
+
   public setActiveFilePath(filePath: string): void {
     this.activeFilePath = filePath;
     OverlapConflictDetector.getInstance().setFilePath(filePath);
   }
 
   public async startSession(roomId: string, options?: { isHost?: boolean }): Promise<void> {
-    if (this.currentRoomId && this.currentRoomId !== roomId && this.isStarted) {
+    const isSameRoom = this.currentRoomId === roomId;
+
+    if (this.currentRoomId && !isSameRoom && this.isStarted) {
       await this.transportManager.stopAll();
       this.isStarted = false;
     }
@@ -166,7 +175,9 @@ export class CollaborationManager {
       converged: false,
     });
 
-    this.crdtEngine.reset();
+    if (!isSameRoom) {
+      this.crdtEngine.reset();
+    }
     this.setupCrdtListeners();
 
     if (!this.isStarted) {
@@ -191,12 +202,14 @@ export class CollaborationManager {
 
     SessionStatusStore.getInstance().patch({ phase: 'connecting' });
 
-    const savedSnapshot = await this.persistenceManager.getCrdtSnapshot(roomId);
-    if (savedSnapshot && savedSnapshot.length > 0) {
-      try {
-        this.crdtEngine.applyUpdate(savedSnapshot, 'local-persistence');
-      } catch (e) {
-        console.warn('[CollaborationManager] Could not load saved snapshot:', e);
+    if (!isSameRoom) {
+      const savedSnapshot = await this.persistenceManager.getCrdtSnapshot(roomId);
+      if (savedSnapshot && savedSnapshot.length > 0) {
+        try {
+          this.crdtEngine.applyUpdate(savedSnapshot, 'local-persistence');
+        } catch (e) {
+          console.warn('[CollaborationManager] Could not load saved snapshot:', e);
+        }
       }
     }
   }
@@ -232,7 +245,7 @@ export class CollaborationManager {
         }
 
         if (!this.hasRoomKey) {
-          this.pendingRemoteFrames.push({ peerId, bytes: frameBytes });
+          this.pendingRemoteFrames.push({ peerId, frameObj });
           return;
         }
 
@@ -250,9 +263,8 @@ export class CollaborationManager {
         const phase = this.transportManager.getActiveTransportType() === 'lan' ? 'lan-relay' : 'connected';
         SessionStatusStore.getInstance().patch({ phase });
         this.sendHello(peerId);
-        if (this.hasRoomKey) {
-          this.sendStateVectorToPeer(peerId);
-          this.flushPendingOfflineOps();
+        if (this.hasRoomKey && this.membership.members.has(peerId)) {
+          this.sendSyncStep1(peerId);
         }
       }
     });
@@ -278,6 +290,21 @@ export class CollaborationManager {
       if (this.isHost && this.hasRoomKey) {
         this.sendKeyDistribute(peerId);
       }
+      if (this.hasRoomKey) {
+        this.sendSyncStep1(peerId);
+      }
+
+      // Process buffered frames that were waiting for membership
+      const buffered = [...this.pendingRemoteFrames];
+      this.pendingRemoteFrames = [];
+      for (const item of buffered) {
+        if (!this.hasRoomKey) {
+          this.pendingRemoteFrames.push(item);
+        } else {
+          this.applySecuredFrame(item.peerId, item.frameObj);
+        }
+      }
+
       return true;
     }
 
@@ -285,23 +312,21 @@ export class CollaborationManager {
       this.projectKey = SecurityManager.keyFromBase64(msg.keyB64);
       this.securityPipeline.setProjectKey(this.projectKey);
       this.hasRoomKey = true;
-      for (const pending of this.pendingRemoteFrames) {
-        try {
-          const parsed = JSON.parse(new TextDecoder().decode(pending.bytes));
-          this.applySecuredFrame(pending.peerId, parsed);
-        } catch {
-          // skip
-        }
-      }
+      
+      const buffered = [...this.pendingRemoteFrames];
       this.pendingRemoteFrames = [];
-      this.sendStateVectorToPeer(peerId);
-      this.flushPendingOfflineOps();
+      for (const item of buffered) {
+        this.applySecuredFrame(item.peerId, item.frameObj);
+      }
+
+      this.sendSyncStep1(peerId);
       return true;
     }
 
     if (msg.type === 'HASH_ANNOUNCE' && typeof msg.hash === 'string') {
-      const localHash = this.crdtEngine.computeWorkspaceHash();
-      const converged = localHash === msg.hash;
+      this.convergenceVerifier.recordRemoteHash(peerId, msg.hash);
+      const localHash = this.convergenceVerifier.getLocalHash();
+      const converged = this.convergenceVerifier.isConverged();
       SessionStatusStore.getInstance().patch({
         remoteHash: msg.hash,
         localHash,
@@ -316,19 +341,48 @@ export class CollaborationManager {
 
   private applySecuredFrame(peerId: string, frameObj: unknown): void {
     const result = this.securityPipeline.processIncomingFrame(frameObj);
-    if (result.success && result.decryptedPayload) {
+    if (!result.success) {
+      if (result.reason === 'Not a member') {
+        this.pendingRemoteFrames.push({ peerId, frameObj });
+      }
+      return;
+    }
+
+    if (result.decryptedPayload) {
       const payloadObj = JSON.parse(result.decryptedPayload);
-      if (payloadObj.u) {
-        const updateBytes = base64ToUint8Array(payloadObj.u);
-        this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
-        OperationLogStore.getInstance().logAppliedOp(peerId, 'UPDATE', payloadObj.filePath || this.activeFilePath);
-        OverlapConflictDetector.getInstance().noteRemoteEdit(
-          peerId,
-          payloadObj.filePath || this.activeFilePath,
-          this.crdtEngine.getText(payloadObj.filePath || this.activeFilePath).toString()
-        );
-        this.saveSnapshotDebounced();
-        this.announceHash();
+      const frameType = result.type;
+      const senderPeerId = result.from || peerId;
+
+      if (frameType === 'crdt.syncStep1') {
+        if (payloadObj.sv) {
+          const remoteSv = base64ToUint8Array(payloadObj.sv);
+          const diffUpdate = this.crdtEngine.encodeStateAsUpdate(remoteSv);
+          if (diffUpdate.length > 0) {
+            const step2Payload = { u: uint8ArrayToBase64(diffUpdate), filePath: this.activeFilePath };
+            const frameBytes = this.sealFrame('crdt.syncStep2', step2Payload);
+            this.transportManager.send(senderPeerId, frameBytes).catch(() => {});
+          }
+        }
+      } else if (frameType === 'crdt.syncStep2' || frameType === 'crdt.update') {
+        if (payloadObj.u) {
+          const updateBytes = base64ToUint8Array(payloadObj.u);
+          this.crdtEngine.applyUpdate(updateBytes, `remote-${senderPeerId}`);
+          this.opLogManager.clearQueue();
+
+          OperationLogStore.getInstance().logAppliedOp(senderPeerId, 'UPDATE', payloadObj.filePath || this.activeFilePath);
+
+          const isConverged = this.convergenceVerifier.isConverged();
+          if (isConverged) {
+            OverlapConflictDetector.getInstance().noteRemoteEdit(
+              senderPeerId,
+              payloadObj.filePath || this.activeFilePath,
+              this.crdtEngine.getText(payloadObj.filePath || this.activeFilePath).toString()
+            );
+          }
+
+          this.saveSnapshotDebounced();
+          this.announceHash();
+        }
       }
     }
   }
@@ -336,24 +390,34 @@ export class CollaborationManager {
   private setupCrdtListeners(): void {
     this.unsubCrdt?.();
     this.unsubCrdt = this.crdtEngine.onUpdate((update, origin) => {
-      if (origin.startsWith('remote') || origin === 'local-persistence') return;
-
-      this.opLogManager.enqueueLocalUpdate(update);
-      this.saveSnapshotDebounced();
-      OverlapConflictDetector.getInstance().noteLocalEdit(
-        this.identity.peerId,
-        this.activeFilePath,
-        this.crdtEngine.getText(this.activeFilePath).toString()
-      );
-
-      if (!this.hasRoomKey) return;
+      if (origin && (origin.startsWith('remote') || origin === 'local-persistence')) return;
 
       const payloadObj = {
         u: uint8ArrayToBase64(update),
         filePath: this.activeFilePath,
       };
       const frameBytes = this.sealFrame('crdt.update', payloadObj);
-      this.transportManager.broadcast(frameBytes).catch(() => {});
+
+      if (this.hasRoomKey) {
+        this.transportManager.broadcast(frameBytes).catch(() => {
+          this.opLogManager.enqueueLocalUpdate(update);
+        });
+      } else {
+        this.opLogManager.enqueueLocalUpdate(update);
+      }
+
+      this.saveSnapshotDebounced();
+
+      const isConverged = this.convergenceVerifier.isConverged();
+      if (isConverged) {
+        OverlapConflictDetector.getInstance().noteLocalEdit(
+          this.identity.peerId,
+          this.activeFilePath,
+          this.crdtEngine.getText(this.activeFilePath).toString()
+        );
+      }
+
+      this.announceHash();
     });
   }
 
@@ -377,24 +441,21 @@ export class CollaborationManager {
     this.transportManager.send(peerId, new TextEncoder().encode(JSON.stringify(msg))).catch(() => {});
   }
 
-  private sendStateVectorToPeer(peerId: string): void {
-    if (!this.hasRoomKey) return;
+  private sendSyncStep1(peerId: string): void {
+    if (!this.hasRoomKey || !this.membership.members.has(peerId)) return;
     try {
-      const stateUpdate = this.crdtEngine.encodeStateAsUpdate();
-      const payloadObj = {
-        u: uint8ArrayToBase64(stateUpdate),
-        filePath: this.activeFilePath,
-      };
-      const frameBytes = this.sealFrame('crdt.syncStep2', payloadObj);
+      const sv = this.crdtEngine.encodeStateVector();
+      const payloadObj = { sv: uint8ArrayToBase64(sv) };
+      const frameBytes = this.sealFrame('crdt.syncStep1', payloadObj);
       this.transportManager.send(peerId, frameBytes).catch(() => {});
     } catch (e) {
-      console.warn('[CollaborationManager] Failed to send state vector to peer:', peerId, e);
+      console.warn('[CollaborationManager] Failed to send syncStep1 to peer:', peerId, e);
     }
   }
 
-  private announceHash(): void {
-    const hash = this.crdtEngine.computeWorkspaceHash();
-    SessionStatusStore.getInstance().patch({ localHash: hash });
+  public announceHash(): void {
+    const hash = this.convergenceVerifier.getLocalHash();
+    SessionStatusStore.getInstance().patch({ localHash: hash, converged: this.convergenceVerifier.isConverged() });
     const msg = { type: 'HASH_ANNOUNCE', hash, from: this.identity.peerId };
     this.transportManager.broadcast(new TextEncoder().encode(JSON.stringify(msg))).catch(() => {});
   }
@@ -416,22 +477,6 @@ export class CollaborationManager {
       sig: signature,
     };
     return new TextEncoder().encode(JSON.stringify(frame));
-  }
-
-  private flushPendingOfflineOps(): void {
-    this.opLogManager.flushQueue((op) => {
-      try {
-        const payloadObj = {
-          u: uint8ArrayToBase64(op.update),
-          filePath: this.activeFilePath,
-        };
-        const frameBytes = this.sealFrame('crdt.update', payloadObj);
-        this.transportManager.broadcast(frameBytes);
-        return true;
-      } catch {
-        return false;
-      }
-    });
   }
 
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;

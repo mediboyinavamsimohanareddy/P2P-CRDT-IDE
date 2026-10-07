@@ -1,7 +1,20 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Heart, CheckCircle2, ShieldCheck, Cpu, HardDrive, RefreshCw } from 'lucide-react';
+import { SessionStatusStore } from '../core/sync/SessionStatusStore';
 
 export const ProjectHealthView: React.FC = () => {
+  const [sessionStatus, setSessionStatus] = useState(SessionStatusStore.getInstance().get());
+
+  useEffect(() => {
+    const unsubscribe = SessionStatusStore.getInstance().subscribe(() => {
+      setSessionStatus(SessionStatusStore.getInstance().get());
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const crdtStatusLabel = sessionStatus.converged ? 'HEALTHY (CONVERGED)' : 'SYNCING';
+  const crdtStatusColor = sessionStatus.converged ? 'text-status-pass' : 'text-status-warning';
+
   return (
     <div className="flex-1 bg-bg-darkest text-gray-200 p-6 flex flex-col gap-6 overflow-y-auto font-sans">
       <div className="flex items-center justify-between border-b border-border-subtle pb-4">
@@ -25,9 +38,9 @@ export const ProjectHealthView: React.FC = () => {
         <div className="bg-bg-dark border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
           <div className="flex justify-between items-center font-bold text-gray-200 border-b border-border-subtle pb-2">
             <span>CRDT Replica Engine</span>
-            <span className="text-status-pass font-mono font-bold">HEALTHY</span>
+            <span className={`${crdtStatusColor} font-mono font-bold`}>{crdtStatusLabel}</span>
           </div>
-          <p className="text-gray-400 text-[11px]">Yjs Y.Doc active. Canonical workspace SHA-256 state vector matches active peers.</p>
+          <p className="text-gray-400 text-[11px]">Yjs Y.Doc active. Canonical workspace hash matches active peers.</p>
         </div>
 
         <div className="bg-bg-dark border border-border-subtle rounded-lg p-4 flex flex-col gap-2">

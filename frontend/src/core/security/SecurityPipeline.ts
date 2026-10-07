@@ -37,7 +37,13 @@ export class SecurityPipeline {
     return this.membership;
   }
 
-  processIncomingFrame(rawFrame: unknown): { success: boolean; decryptedPayload?: string; reason?: string } {
+  processIncomingFrame(rawFrame: unknown): {
+    success: boolean;
+    decryptedPayload?: string;
+    reason?: string;
+    type?: Frame['type'];
+    from?: string;
+  } {
     // Stage 1: Schema Check
     const parseResult = FrameSchema.safeParse(rawFrame);
     if (!parseResult.success) {
@@ -82,7 +88,7 @@ export class SecurityPipeline {
       );
 
       this.seenOpIds.add(frame.opId);
-      return { success: true, decryptedPayload: decrypted };
+      return { success: true, decryptedPayload: decrypted, type: frame.type, from: frame.from };
     } catch {
       this.emitEvent('Payload modified', 'REJECTED', 'Decryption or auth tag verification failed', frame.from);
       return { success: false, reason: 'Payload modified' };

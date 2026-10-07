@@ -54,4 +54,8 @@ export class OpLogManager {
     }
     this.pendingQueue = remaining;
   }
+
+  clearQueue(): void {
+    this.pendingQueue = [];
+  }
 }
