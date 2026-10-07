@@ -10,8 +10,26 @@ describe('RoomPeerStore', () => {
 
   it('updates peer count when room peers connect', () => {
     const store = RoomPeerStore.getInstance();
-    store.connectDemoRoomPeers('DB-72A91');
-    expect(store.getConnectedPeerCount()).toBe(3);
+    store.setRoomId('DB-72A91');
+    store.setRoomPeers([
+      {
+        id: 'peer-local-you',
+        displayName: 'You (Local Host)',
+        role: 'Host',
+        status: 'connected',
+        activity: 'Editing active workspace',
+        color: '#2EE6A6',
+      },
+      {
+        id: 'peer-2',
+        displayName: 'Peer 2',
+        role: 'Peer',
+        status: 'connected',
+        activity: 'Connected',
+        color: '#4D96FF',
+      },
+    ]);
+    expect(store.getConnectedPeerCount()).toBe(2);
     expect(store.getRoomId()).toBe('DB-72A91');
   });
 });

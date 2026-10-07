@@ -188,26 +188,19 @@ export const BottomPanel: React.FC = () => {
         </div>
       ) : (
         <div className="flex-1 p-3 font-mono text-[11px] overflow-y-auto bg-bg-darkest text-gray-300">
-          <div className="flex items-center gap-2 text-gray-500 mb-1">
-            <span>[12:42:10]</span>
-            <span>Starting verification pipeline for AI Merge Proposal #0042...</span>
-          </div>
-          <div className="flex items-center gap-2 text-status-pass mb-1">
-            <span>[12:42:11]</span>
-            <span>✓ AST Parse successful (12ms)</span>
-          </div>
-          <div className="flex items-center gap-2 text-status-pass mb-1">
-            <span>[12:42:12]</span>
-            <span>✓ mvn compile: BUILD SUCCESS (840ms)</span>
-          </div>
-          <div className="flex items-center gap-2 text-status-pass mb-1">
-            <span>[12:42:15]</span>
-            <span>✓ mvn test: Tests run: 42, Failures: 0, Errors: 0, Skipped: 0 (2.4s)</span>
-          </div>
-          <div className="flex items-center gap-2 text-accent-mint font-bold mt-2">
-            <span>[12:42:15]</span>
-            <span>VERIFICATION PASSED. Merge is safe to apply.</span>
-          </div>
+          {logs.length === 0 ? (
+            <div className="text-gray-500 italic p-2">No verification logs available. Run verification pipeline to see live build diagnostics.</div>
+          ) : (
+            logs.map((log) => (
+              <div key={log.opNumber} className="flex items-center gap-2 mb-1">
+                <span className="text-gray-500">[{log.timestamp}]</span>
+                <span className="text-gray-300">{log.peerId}:</span>
+                <span className={log.status === 'APPLIED' ? 'text-status-pass font-bold' : 'text-status-error font-bold'}>
+                  {log.type} on {log.filePath} ({log.status})
+                </span>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>

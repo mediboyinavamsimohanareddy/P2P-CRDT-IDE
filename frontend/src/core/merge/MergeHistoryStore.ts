@@ -2,27 +2,7 @@ import { MergeHistoryRecord } from '../../components/RightPanel';
 
 export class MergeHistoryStore {
   private static instance: MergeHistoryStore;
-  private records: MergeHistoryRecord[] = [
-    {
-      id: 'MERGE #0042',
-      file: 'LoginService.java',
-      functionName: 'validatePassword()',
-      participants: ['Arjun (You)', 'Rahul', 'Mohammed'],
-      aiModel: 'Llama 3.1 8B Instant (Groq)',
-      confidence: 94,
-      status: 'ACCEPTED',
-      timestamp: new Date().toLocaleTimeString(),
-      stateHash: '8F3A...C21D',
-      verificationDetails: {
-        syntax: true,
-        ast: true,
-        staticAnalysis: true,
-        typeCheck: true,
-        compilation: true,
-        tests: '42/42 PASS',
-      },
-    },
-  ];
+  private records: MergeHistoryRecord[] = [];
 
   private listeners: Array<() => void> = [];
 

@@ -1,5 +1,14 @@
 import * as Y from 'yjs';
-import { createHash } from 'crypto';
+
+// Simple JS FNV-1a non-cryptographic hash for browser environment compatibility
+function fnv1aHash(str: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
 
 export interface CrdtEngine {
   getDoc(): Y.Doc;
@@ -57,7 +66,7 @@ export class YjsCrdtEngine implements CrdtEngine {
 
   computeFileHash(path: string): string {
     const content = this.getText(path).toString();
-    return createHash('sha256').update(content, 'utf-8').digest('hex');
+    return fnv1aHash(content);
   }
 
   computeWorkspaceHash(): string {
@@ -67,12 +76,12 @@ export class YjsCrdtEngine implements CrdtEngine {
     for (const key of shareKeys) {
       if (key === 'metadata') continue;
       const fileContent = this.doc.getText(key).toString();
-      const fileHash = createHash('sha256').update(fileContent, 'utf-8').digest('hex');
+      const fileHash = fnv1aHash(fileContent);
       hashes.push(`${key}:${fileHash}`);
     }
 
     const canonicalData = hashes.join('\n');
-    return createHash('sha256').update(canonicalData, 'utf-8').digest('hex');
+    return fnv1aHash(canonicalData);
   }
 
   destroy(): void {

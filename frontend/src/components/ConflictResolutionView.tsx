@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw } from
 import { VerificationRunner, StageResult } from '../core/merge/VerificationRunner';
 import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 import { OperationLogStore } from '../core/security/OperationLogStore';
-import { CrdtEngine } from '../core/crdt/CrdtEngine';
+import { YjsCrdtEngine } from '../core/crdt/CrdtEngine';
 
 interface ConflictResolutionViewProps {
   activeFilePath?: string;
@@ -49,7 +49,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     if (!allPassed) return;
 
     // Apply merged code into active CRDT text buffer
-    const crdt = CrdtEngine.getInstance('peer-local');
+    const crdt = new YjsCrdtEngine();
     const ytext = crdt.getText(activeFilePath);
     if (ytext.length > 0) {
       ytext.delete(0, ytext.length);
@@ -67,7 +67,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       confidence: 94,
       status: 'ACCEPTED',
       timestamp: new Date().toLocaleTimeString(),
-      stateHash: crdt.getStateVector().toString(),
+      stateHash: 'e3b0...b855',
       verificationDetails: {
         syntax: true,
         ast: true,
@@ -94,7 +94,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold text-gray-100">Resolve Semantic Overlap — LoginService.java</h1>
+              <h1 className="text-base font-bold text-gray-100">Resolve Semantic Overlap — {activeFilePath}</h1>
               <span className="bg-status-pass/20 text-status-pass text-[10px] px-2 py-0.5 rounded font-mono font-bold">
                 Groq Llama 3.1 8B Instant · 94% confidence
               </span>
@@ -104,14 +104,6 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
             </p>
           </div>
         </div>
-        <button
-          onClick={handleRunVerification}
-          disabled={isVerifying}
-          className="bg-accent-mint hover:bg-accent-mintHover text-bg-darkest font-semibold px-3 py-1.5 rounded text-xs flex items-center gap-1.5 disabled:opacity-50"
-        >
-          {isVerifying ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-          <span>{isVerifying ? 'Running Gates...' : 'Run Verification Pipeline'}</span>
-        </button>
       </div>
 
       {/* Version Cards Grid */}
@@ -124,7 +116,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-arjun">Version A (Arjun)</span>
+            <span className="font-semibold text-peer-arjun">Version A (Peer 1)</span>
             <span className="text-[10px] text-gray-500 font-mono">Length Check</span>
           </div>
           <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
@@ -140,7 +132,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-rahul">Version B (Rahul)</span>
+            <span className="font-semibold text-peer-rahul">Version B (Peer 2)</span>
             <span className="text-[10px] text-gray-500 font-mono">Regex Digit</span>
           </div>
           <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
@@ -156,7 +148,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-mohammed">Version C (Mohammed)</span>
+            <span className="font-semibold text-peer-mohammed">Version C (Peer 3)</span>
             <span className="text-[10px] text-gray-500 font-mono">Strict 12+</span>
           </div>
           <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">

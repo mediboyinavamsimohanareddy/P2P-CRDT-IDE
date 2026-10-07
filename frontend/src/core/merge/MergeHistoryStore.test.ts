@@ -10,7 +10,7 @@ describe('MergeHistoryStore', () => {
       id: 'MERGE #0043',
       file: 'AuthPolicy.java',
       functionName: 'checkRole()',
-      participants: ['Arjun'],
+      participants: ['Peer 1'],
       aiModel: 'Llama 3.1 8B Instant (Groq)',
       confidence: 96,
       status: 'ACCEPTED',

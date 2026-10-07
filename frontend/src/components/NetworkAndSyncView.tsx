@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Network, Wifi, ShieldCheck, Copy, Check } from 'lucide-react';
+import { Network, Wifi, ShieldCheck, Copy, Check, Plus, LogIn } from 'lucide-react';
 import { RoomPeerStore, ConnectedPeer } from '../core/sync/RoomPeerStore';
 
 export const NetworkAndSyncView: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [peers, setPeers] = useState<ConnectedPeer[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
+  const [joinInput, setJoinInput] = useState('');
+  const [showJoinModal, setShowJoinModal] = useState(false);
 
   useEffect(() => {
     const store = RoomPeerStore.getInstance();
@@ -17,6 +19,32 @@ export const NetworkAndSyncView: React.FC = () => {
       setRoomId(store.getRoomId());
     });
   }, []);
+
+  const handleCreateRoom = async () => {
+    try {
+      const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+      const res = await fetch(`http://${host}:8082/api/rooms/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'DecentraWorkspace', peerId: RoomPeerStore.getInstance().getLocalPeerId() }),
+      });
+      const data = await res.json();
+      if (data.success && data.roomId) {
+        RoomPeerStore.getInstance().setRoomId(data.roomId);
+      } else {
+        RoomPeerStore.getInstance().setRoomId('DB-' + Math.random().toString(36).substring(2, 7).toUpperCase());
+      }
+    } catch {
+      RoomPeerStore.getInstance().setRoomId('DB-' + Math.random().toString(36).substring(2, 7).toUpperCase());
+    }
+  };
+
+  const handleJoinRoom = () => {
+    if (!joinInput.trim()) return;
+    RoomPeerStore.getInstance().setRoomId(joinInput.trim().toUpperCase());
+    setShowJoinModal(false);
+    setJoinInput('');
+  };
 
   const handleCopyInvite = () => {
     navigator.clipboard.writeText(`decentraide://join/${roomId || 'DB-72A91'}`);
@@ -37,14 +65,63 @@ export const NetworkAndSyncView: React.FC = () => {
             Real-time peer connection state, CRDT state vector convergence, and transport analytics.
           </p>
         </div>
-        <button
-          onClick={handleCopyInvite}
-          className="bg-accent-mint hover:bg-accent-mintHover text-bg-darkest font-semibold px-3 py-1.5 rounded text-xs flex items-center gap-1.5"
-        >
-          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-          <span>{copied ? 'Copied Link!' : 'Copy Room Invite'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCreateRoom}
+            className="bg-accent-mint hover:bg-accent-mintHover text-bg-darkest font-semibold px-3 py-1.5 rounded text-xs flex items-center gap-1.5 shadow"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create Room</span>
+          </button>
+          <button
+            onClick={() => setShowJoinModal(true)}
+            className="bg-status-info hover:bg-status-info/80 text-white font-semibold px-3 py-1.5 rounded text-xs flex items-center gap-1.5 shadow"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Join Room</span>
+          </button>
+          <button
+            onClick={handleCopyInvite}
+            className="bg-bg-panel border border-border-subtle hover:bg-bg-dark text-gray-200 font-medium px-3 py-1.5 rounded text-xs flex items-center gap-1.5"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-status-pass" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copied ? 'Copied Link!' : 'Copy Invite'}</span>
+          </button>
+        </div>
       </div>
+
+      {/* Join Room Modal */}
+      {showJoinModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-bg-dark border border-border-subtle rounded-lg p-5 w-full max-w-md flex flex-col gap-4 shadow-xl">
+            <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+              <LogIn className="w-4 h-4 text-status-info" /> Join Collaborative P2P Room
+            </h3>
+            <p className="text-xs text-gray-400">Enter the Room ID supplied by the host laptop:</p>
+            <input
+              type="text"
+              placeholder="e.g. DB-72A91"
+              value={joinInput}
+              onChange={(e) => setJoinInput(e.target.value)}
+              className="bg-bg-darkest border border-border-subtle px-3 py-2 rounded text-xs text-gray-200 font-mono focus:outline-none focus:border-accent-mint"
+            />
+            <div className="flex justify-end gap-2 mt-2">
+              <button
+                onClick={() => setShowJoinModal(false)}
+                className="px-3 py-1.5 rounded text-xs text-gray-400 hover:text-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleJoinRoom}
+                className="bg-status-info hover:bg-status-info/80 text-white font-semibold px-4 py-1.5 rounded text-xs"
+              >
+                Connect to Room
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Grid: Topology & Convergence */}
       <div className="grid grid-cols-2 gap-4">

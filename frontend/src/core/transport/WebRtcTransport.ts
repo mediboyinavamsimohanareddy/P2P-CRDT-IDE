@@ -27,13 +27,20 @@ export class WebRtcTransport implements Transport {
   private bytesOut = 0;
   private lastRttMs = 18;
 
-  constructor(localPeerId: string, roomId: string, wsUrl = 'ws://localhost:8082/ws/signaling') {
+  constructor(
+    localPeerId: string,
+    roomId: string,
+    wsUrl = `ws://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8082/ws/signaling`
+  ) {
     this.localPeerId = localPeerId;
     this.roomId = roomId;
     this.wsUrl = wsUrl;
   }
 
   async start(): Promise<void> {
+    if (typeof window === 'undefined' || typeof WebSocket === 'undefined') {
+      return;
+    }
     return new Promise((resolve) => {
       try {
         this.ws = new WebSocket(this.wsUrl);

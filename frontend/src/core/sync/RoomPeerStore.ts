@@ -1,3 +1,5 @@
+import { WebRtcTransport } from '../transport/WebRtcTransport';
+
 export interface ConnectedPeer {
   id: string;
   displayName: string;
@@ -22,7 +24,7 @@ export class RoomPeerStore {
   }
 
   constructor() {
-    // Default initial state: Local peer only (1 peer connected) until room joining/connecting
+    // Default initial state: Local peer only (1 peer connected) - strictly connected live peers
     this.peers = [
       {
         id: this.localPeerId,
@@ -37,6 +39,27 @@ export class RoomPeerStore {
 
   setRoomId(roomId: string): void {
     this.roomId = roomId;
+
+    // Automatically create WebRTC Transport instance for real P2P peer discovery if in browser environment
+    if (typeof window !== 'undefined' && typeof WebSocket !== 'undefined') {
+      const transport = new WebRtcTransport(this.localPeerId, roomId);
+      transport.onPeerState((peerId, state) => {
+        if (state === 'connected') {
+          this.addPeer({
+            id: peerId,
+            displayName: `Peer (${peerId.substring(0, 6)})`,
+            role: 'Peer',
+            status: 'connected',
+            activity: 'Active in session',
+            color: '#4D96FF',
+          });
+        } else if (state === 'offline') {
+          this.removePeer(peerId);
+        }
+      });
+      transport.start();
+    }
+
     this.notify();
   }
 
@@ -67,35 +90,9 @@ export class RoomPeerStore {
     return this.peers.filter((p) => p.status === 'connected').length;
   }
 
-  // Helper for demo/multi-peer room simulation
-  connectDemoRoomPeers(roomId: string): void {
-    this.roomId = roomId;
-    this.peers = [
-      {
-        id: 'peer-local-you',
-        displayName: 'Arjun (You)',
-        role: 'Host',
-        status: 'connected',
-        activity: 'Editing LoginService.java',
-        color: '#2EE6A6',
-      },
-      {
-        id: 'peer-rahul',
-        displayName: 'Rahul',
-        role: 'Peer',
-        status: 'connected',
-        activity: 'Reviewing auth policy',
-        color: '#4D96FF',
-      },
-      {
-        id: 'peer-mohammed',
-        displayName: 'Mohammed',
-        role: 'Peer',
-        status: 'connected',
-        activity: 'Running verification',
-        color: '#6BCB77',
-      },
-    ];
+  // Set connected room peers
+  setRoomPeers(connectedPeers: ConnectedPeer[]): void {
+    this.peers = connectedPeers.filter((p) => p.status === 'connected');
     this.notify();
   }
 
