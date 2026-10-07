@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw } from 'lucide-react';
 import { VerificationRunner, StageResult } from '../core/merge/VerificationRunner';
 import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 import { OperationLogStore } from '../core/security/OperationLogStore';
 import { YjsCrdtEngine } from '../core/crdt/CrdtEngine';
+import { OverlapConflictDetector } from '../core/merge/OverlapConflictDetector';
+import { SemanticConflictResolver } from '../core/merge/SemanticConflictResolver';
+import { OllamaLocalProvider } from '../core/ai/AIProvider';
+import { Conflict } from '@decentraide/shared';
 
 export interface ConflictResolutionViewProps {
   crdtEngine?: YjsCrdtEngine;
@@ -14,14 +18,20 @@ export interface ConflictResolutionViewProps {
 
 export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   crdtEngine,
-  activeFilePath = 'LoginService.java',
+  activeFilePath = 'Main.java',
   activeCode,
   onApplyResolvedCode,
 }) => {
-  const defaultCode = activeCode || `public boolean validatePassword(String pass) {\n    if (pass == null) return false;\n    // Ollama Mistral Merged: Length check (>=8) combined with digit requirement\n    return pass.length() >= 8 && pass.matches(".*\\\\d.*");\n}`;
-  const [proposedCode, setProposedCode] = useState<string>(defaultCode);
-  const [selectedVersion, setSelectedVersion] = useState<'A' | 'B' | 'C' | 'AI'>('AI');
+  const [activeConflict, setActiveConflict] = useState<Conflict | null>(
+    OverlapConflictDetector.getInstance().getLatest()
+  );
+
+  const [proposedCode, setProposedCode] = useState<string>(
+    activeCode || `int a = 10;\nint a2 = 20;\nint b = 30;\nint sum = a + a2 + b; // Expected output: 60`
+  );
+  const [selectedVersion, setSelectedVersion] = useState<'A' | 'B' | 'AI'>('AI');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [allPassed, setAllPassed] = useState(false);
   const [isStaged, setIsStaged] = useState(false);
   const [stages, setStages] = useState<StageResult[]>([
@@ -32,6 +42,37 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     { stage: 'compile', label: 'mvn compile', status: 'idle' },
     { stage: 'tests', label: 'mvn test', status: 'idle' },
   ]);
+
+  // Subscribe to real live conflicts detected by OverlapConflictDetector
+  useEffect(() => {
+    const detector = OverlapConflictDetector.getInstance();
+    const updateConflict = (conflict: Conflict) => {
+      setActiveConflict(conflict);
+      generateAiSolution(conflict);
+    };
+
+    const unsub = detector.subscribe(updateConflict);
+    const latest = detector.getLatest();
+    if (latest) {
+      setActiveConflict(latest);
+      generateAiSolution(latest);
+    }
+
+    return () => unsub();
+  }, []);
+
+  const generateAiSolution = async (conflict: Conflict) => {
+    setIsGeneratingAi(true);
+    try {
+      const resolver = new SemanticConflictResolver(new OllamaLocalProvider());
+      const proposal = await resolver.resolveConflict(conflict);
+      setProposedCode(proposal.proposedCode);
+    } catch {
+      // Fallback
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
 
   const handleRunVerification = async () => {
     setIsVerifying(true);
@@ -97,36 +138,44 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold text-gray-100">Resolve Semantic Overlap — {activeFilePath}</h1>
+              <h1 className="text-base font-bold text-gray-100">
+                Resolve Semantic Overlap — {activeConflict?.filePath || activeFilePath}
+              </h1>
               <span className="bg-status-pass/20 text-status-pass text-[10px] px-2 py-0.5 rounded font-mono font-bold">
-                Ollama Mistral:latest · 95% confidence
+                Ollama Mistral / Local AI Merge
               </span>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
-              Three concurrent edits modified password policy validation logic. AI proposal must pass live compile &amp; test gates.
+              Two concurrent edits generated overlapping changes. Review Ollama's AI resolution proposal below and run verification gates.
             </p>
           </div>
         </div>
       </div>
 
       {/* Version Cards Grid */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         {/* Version A */}
         <div
           onClick={() => {
             setSelectedVersion('A');
-            setProposedCode('return pass.length() > 8;');
+            if (activeConflict?.versions[0]) {
+              setProposedCode(activeConflict.versions[0].codeSnippet);
+            } else {
+              setProposedCode('int a = 10;\nint b = 30;');
+            }
           }}
           className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-colors ${
             selectedVersion === 'A' ? 'border-peer-arjun bg-peer-arjun/5' : 'border-border-subtle hover:border-gray-600'
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-arjun">Version A (Laptop A)</span>
-            <span className="text-[10px] text-gray-500 font-mono">Length Check</span>
+            <span className="font-semibold text-peer-arjun">
+              User 1 ({activeConflict?.versions[0]?.authorId?.substring(0, 8) || 'Laptop A'})
+            </span>
+            <span className="text-[10px] text-gray-500 font-mono">Concurrent Version</span>
           </div>
-          <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
-            return pass.length() &gt; 8;
+          <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap">
+            {activeConflict?.versions[0]?.codeSnippet || 'int a = 10;\nint b = 30;'}
           </pre>
         </div>
 
@@ -134,37 +183,24 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         <div
           onClick={() => {
             setSelectedVersion('B');
-            setProposedCode('return pass.matches(".*\\\\d.*");');
+            if (activeConflict?.versions[1]) {
+              setProposedCode(activeConflict.versions[1].codeSnippet);
+            } else {
+              setProposedCode('int a = 20;\nint b = 30;');
+            }
           }}
           className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-colors ${
             selectedVersion === 'B' ? 'border-peer-rahul bg-peer-rahul/5' : 'border-border-subtle hover:border-gray-600'
           }`}
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-rahul">Version B (Laptop B)</span>
-            <span className="text-[10px] text-gray-500 font-mono">Regex Digit</span>
+            <span className="font-semibold text-peer-rahul">
+              User 2 ({activeConflict?.versions[1]?.authorId?.substring(0, 8) || 'Laptop B'})
+            </span>
+            <span className="text-[10px] text-gray-500 font-mono">Concurrent Version</span>
           </div>
-          <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
-            return pass.matches(".*\\d.*");
-          </pre>
-        </div>
-
-        {/* Version C */}
-        <div
-          onClick={() => {
-            setSelectedVersion('C');
-            setProposedCode('return pass.length() >= 12;');
-          }}
-          className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-colors ${
-            selectedVersion === 'C' ? 'border-peer-mohammed bg-peer-mohammed/5' : 'border-border-subtle hover:border-gray-600'
-          }`}
-        >
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-peer-mohammed">Version C (Laptop C Reconnected)</span>
-            <span className="text-[10px] text-gray-500 font-mono">Strict 12+</span>
-          </div>
-          <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300">
-            return pass.length() &gt;= 12;
+          <pre className="text-[11px] font-mono bg-bg-darkest p-2 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap">
+            {activeConflict?.versions[1]?.codeSnippet || 'int a = 20;\nint b = 30;'}
           </pre>
         </div>
       </div>
@@ -174,15 +210,16 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         <div className="flex items-center justify-between border-b border-border-subtle pb-2">
           <div className="flex items-center gap-2 font-semibold text-xs text-gray-200">
             <Sparkles className="w-4 h-4 text-accent-mint" />
-            <span>Ollama Mistral:latest Merge Proposal</span>
+            <span>Ollama AI Semantic Merge Proposal</span>
+            {isGeneratingAi && <RefreshCw className="w-3.5 h-3.5 text-accent-mint animate-spin ml-2" />}
           </div>
           <span className="text-[11px] font-mono">
             {isStaged ? (
-              <span className="text-status-pass font-bold">✓ MERGE ACCEPTED &amp; STAGED TO CRDT</span>
+              <span className="text-status-pass font-bold">✓ MERGE STAGED TO BOTH CRDT REPLICAS</span>
             ) : allPassed ? (
-              <span className="text-status-pass font-bold">VERIFIED PASS</span>
+              <span className="text-status-pass font-bold">✓ ALL TESTCASES PASSED</span>
             ) : isVerifying ? (
-              <span className="text-status-warn">VERIFYING GATES...</span>
+              <span className="text-status-warn">VERIFYING TESTCASES...</span>
             ) : (
               <span className="text-gray-500">Pending Verification</span>
             )}

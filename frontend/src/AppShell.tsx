@@ -93,6 +93,17 @@ export const AppShell: React.FC = () => {
     }
   };
 
+  const handleEditorMount = (editor: any) => {
+    if (!activeTab) return;
+    let binding = bindingsRef.current.get(activeTab.filePath);
+    if (!binding) {
+      binding = new CrdtMonacoBinding(crdtEngine, activeTab.filePath);
+      bindingsRef.current.set(activeTab.filePath, binding);
+      fsBinding.handleFileCreated(activeTab.filePath, activeTab.content || '');
+    }
+    binding.setEditorInstance(editor);
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg-darkest text-gray-200 font-sans">
       <TitleBar
@@ -155,6 +166,7 @@ export const AppShell: React.FC = () => {
                 onCloseTab={closeTab}
                 onContentChange={handleContentChange}
                 onOpenSecurityDashboard={() => setActiveView('security')}
+                onEditorMount={handleEditorMount}
               />
             )}
             <RightPanel />

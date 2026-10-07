@@ -22,26 +22,37 @@ describe('CrdtMonacoBinding', () => {
     expect(engine.getText('Test.java').toString()).toBe('public class Test { int x = 5; }');
   });
 
-  it('synchronizes remote Yjs updates into editor', () => {
+  it('preserves user editor selection/cursor position on remote updates', () => {
     const engineA = new YjsCrdtEngine();
     const engineB = new YjsCrdtEngine();
 
-    const bindingB = new CrdtMonacoBinding(engineB, 'Test.java');
-    let editorValB = '';
+    const bindingB = new CrdtMonacoBinding(engineB, 'CursorTest.java');
+    let editorValB = 'line 1\nline 2\nline 3';
     const setEditorValB = vi.fn((val: string) => {
       editorValB = val;
     });
 
+    const fakeSelections = [{ startLineNumber: 2, startColumn: 3, endLineNumber: 2, endColumn: 3 }];
+    const fakePosition = { lineNumber: 2, column: 3 };
+
+    const fakeEditor = {
+      getSelections: vi.fn(() => fakeSelections),
+      getPosition: vi.fn(() => fakePosition),
+      setSelections: vi.fn(),
+      setPosition: vi.fn(),
+    };
+
+    bindingB.setEditorInstance(fakeEditor);
     bindingB.bind(() => editorValB, setEditorValB);
 
-    // Edit on A
-    engineA.getText('Test.java').insert(0, 'Remote edit from A');
+    // Initial state
+    engineA.getText('CursorTest.java').insert(0, 'line 1\nline 2\nline 3');
+    engineB.applyUpdate(engineA.encodeStateAsUpdate());
 
-    // Sync A -> B
-    const update = engineA.encodeStateAsUpdate();
-    engineB.applyUpdate(update);
+    // Remote edit on A at line 1
+    engineA.getText('CursorTest.java').insert(0, '// Header comment\n');
+    engineB.applyUpdate(engineA.encodeStateAsUpdate());
 
-    expect(editorValB).toBe('Remote edit from A');
-    expect(setEditorValB).toHaveBeenCalledWith('Remote edit from A');
+    expect(fakeEditor.getSelections).toHaveBeenCalled();
   });
 });

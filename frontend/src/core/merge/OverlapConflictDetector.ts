@@ -63,7 +63,7 @@ export class OverlapConflictDetector {
       id: `overlap-${a.at}-${b.at}`,
       filePath: a.filePath || this.activeFilePath,
       detectedAt: Date.now(),
-      baseSnippet: a.snippet.slice(0, 400),
+      baseSnippet: a.snippet.slice(0, 800),
       versions: [
         {
           authorId: a.peerId,

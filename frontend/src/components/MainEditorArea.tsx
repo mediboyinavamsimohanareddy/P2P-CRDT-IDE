@@ -13,6 +13,7 @@ interface MainEditorAreaProps {
   onCloseTab: (tabId: string) => void;
   onContentChange: (tabId: string, newContent: string) => void;
   onOpenSecurityDashboard?: () => void;
+  onEditorMount?: (editor: any) => void;
 }
 
 export const MainEditorArea: React.FC<MainEditorAreaProps> = ({
@@ -91,6 +92,9 @@ export const MainEditorArea: React.FC<MainEditorAreaProps> = ({
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    if (onEditorMount) {
+      onEditorMount(editor);
+    }
   };
 
   const threatLevel = verdict?.threatLevel || 'Safe';
