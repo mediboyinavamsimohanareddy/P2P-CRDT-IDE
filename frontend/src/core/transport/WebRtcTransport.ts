@@ -30,11 +30,19 @@ export class WebRtcTransport implements Transport {
   constructor(
     localPeerId: string,
     roomId: string,
-    wsUrl = `ws://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8082/ws/signaling`
+    wsUrl?: string
   ) {
     this.localPeerId = localPeerId;
     this.roomId = roomId;
-    this.wsUrl = wsUrl;
+    if (wsUrl) {
+      this.wsUrl = wsUrl;
+    } else if (typeof window !== 'undefined') {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host || 'localhost:8082';
+      this.wsUrl = `${protocol}//${host}/ws/signaling`;
+    } else {
+      this.wsUrl = 'ws://localhost:8082/ws/signaling';
+    }
   }
 
   async start(): Promise<void> {

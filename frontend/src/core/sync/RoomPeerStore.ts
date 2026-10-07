@@ -43,7 +43,6 @@ export class RoomPeerStore {
   setRoomId(roomId: string): void {
     this.roomId = roomId;
 
-    // Automatically connect peer to room and update peer list
     if (typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined' && process.env.NODE_ENV !== 'test') {
       const transport = new WebRtcTransport(this.localPeerId, roomId);
       transport.onPeerState((peerId, state) => {
