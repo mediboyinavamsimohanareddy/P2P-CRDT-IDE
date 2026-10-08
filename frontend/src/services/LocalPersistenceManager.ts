@@ -21,6 +21,20 @@ export interface ActiveSessionMetadata {
   savedAt: number;
 }
 
+export interface OfflineSessionDraft {
+  roomId: string;
+  peerId: string;
+  displayName?: string;
+  code: string;
+  filePath: string;
+  isHost: boolean;
+  lastSavedAt: number;
+}
+
+const OFFLINE_SESSION_KEY = 'decentraide:offline-session';
+const ACTIVE_ROOM_KEY = 'decentraide:active-room-id';
+const CACHED_CODE_KEY = 'decentraide:cached-code';
+
 let nodeFsPromises: typeof import('fs').promises | null = null;
 function getFsPromises(): typeof import('fs').promises | null {
   if (nodeFsPromises) return nodeFsPromises;
@@ -217,6 +231,50 @@ export class LocalPersistenceManager {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Stored under three separate localStorage keys so the jury can inspect them in
+   * DevTools > Application > Local Storage while the laptop is offline.
+   */
+  saveOfflineDraft(draft: OfflineSessionDraft): boolean {
+    if (!this.hasLocalStorage()) return false;
+    window.localStorage.setItem(OFFLINE_SESSION_KEY, JSON.stringify(draft));
+    window.localStorage.setItem(ACTIVE_ROOM_KEY, draft.roomId);
+    window.localStorage.setItem(CACHED_CODE_KEY, draft.code);
+    return true;
+  }
+
+  getOfflineDraft(): OfflineSessionDraft | null {
+    if (!this.hasLocalStorage()) return null;
+    const raw = window.localStorage.getItem(OFFLINE_SESSION_KEY);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<OfflineSessionDraft>;
+      if (typeof parsed.roomId !== 'string' || !parsed.roomId || typeof parsed.code !== 'string') return null;
+      return {
+        roomId: parsed.roomId,
+        peerId: typeof parsed.peerId === 'string' ? parsed.peerId : '',
+        displayName: typeof parsed.displayName === 'string' ? parsed.displayName : undefined,
+        code: parsed.code,
+        filePath: typeof parsed.filePath === 'string' ? parsed.filePath : 'Main.java',
+        isHost: !!parsed.isHost,
+        lastSavedAt: typeof parsed.lastSavedAt === 'number' ? parsed.lastSavedAt : 0,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Removes the offline code once it has been handed to the conflict manager; the room id stays. */
+  clearOfflineDraft(): void {
+    if (!this.hasLocalStorage()) return;
+    window.localStorage.removeItem(OFFLINE_SESSION_KEY);
+    window.localStorage.removeItem(CACHED_CODE_KEY);
+  }
+
+  getActiveRoomId(): string | null {
+    return this.hasLocalStorage() ? window.localStorage.getItem(ACTIVE_ROOM_KEY) : null;
   }
 
   async appendOpLog(opId: string, opData: string): Promise<boolean> {

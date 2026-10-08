@@ -1,6 +1,6 @@
 import { SessionStatusStore } from './SessionStatusStore';
 import { SignalingConfig } from './SignalingConfig';
-import { joinRoom } from './roomApi';
+import { LocalPersistenceManager, OfflineSessionDraft } from '../../services/LocalPersistenceManager';
 
 export interface AutoRejoinConfig {
   maxRetries?: number;
@@ -20,6 +20,8 @@ export class AutoRejoinManager {
   private onlineListenerAttached = false;
 
   private onTriggerRejoin?: (session: { roomId: string; isHost: boolean; signalingHost?: string }) => Promise<void>;
+  private draftProvider?: () => Omit<OfflineSessionDraft, 'lastSavedAt'> | null;
+  private onOfflineCodeRecovered?: (draft: OfflineSessionDraft) => void;
 
   public static getInstance(): AutoRejoinManager {
     if (!AutoRejoinManager.instance) {
@@ -42,6 +44,35 @@ export class AutoRejoinManager {
     this.onTriggerRejoin = handler;
   }
 
+  public setDraftProvider(provider: () => Omit<OfflineSessionDraft, 'lastSavedAt'> | null): void {
+    this.draftProvider = provider;
+  }
+
+  public setOfflineCodeRecoveredHandler(handler: (draft: OfflineSessionDraft) => void): void {
+    this.onOfflineCodeRecovered = handler;
+  }
+
+  /** Writes the current room id and code to localStorage so they survive a closed app or lost Wi-Fi. */
+  public persistDraft(): void {
+    const base = this.draftProvider?.();
+    if (!base || !base.roomId) return;
+    new LocalPersistenceManager('.').saveOfflineDraft({ ...base, lastSavedAt: Date.now() });
+  }
+
+  public persistDraftIfOffline(): void {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      this.persistDraft();
+    }
+  }
+
+  /** On startup, a draft left behind by an offline session means we should rejoin its room once online. */
+  public resumeIfDraftPending(): void {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    if (new LocalPersistenceManager('.').getOfflineDraft()) {
+      this.handleNetworkRecovery();
+    }
+  }
+
   public attachWindowListeners(): void {
     if (typeof window === 'undefined' || this.onlineListenerAttached) return;
 
@@ -59,6 +90,7 @@ export class AutoRejoinManager {
   }
 
   public handleNetworkLoss(): void {
+    this.persistDraft();
     SessionStatusStore.getInstance().patch({
       phase: 'disconnected',
       converged: false,
@@ -106,15 +138,28 @@ export class AutoRejoinManager {
     this.retryCount++;
     SessionStatusStore.getInstance().patch({ phase: 'rejoining' });
 
+    const persistence = new LocalPersistenceManager('.');
+    const draft = persistence.getOfflineDraft();
+    const status = SessionStatusStore.getInstance().get();
+
     try {
-      // Trigger rejoin callback provided by CollaborationManager
+      // The room id comes from localStorage first so a restarted app still finds its room.
       await this.onTriggerRejoin({
-        roomId: SessionStatusStore.getInstance().get().roomId || '',
-        isHost: SessionStatusStore.getInstance().get().isHost,
+        roomId: draft?.roomId || status.roomId || persistence.getActiveRoomId() || '',
+        isHost: draft ? draft.isHost : status.isHost,
         signalingHost: SignalingConfig.getInstance().getHost() || undefined,
       });
 
       this.isRejoining = false;
+
+      if (draft && this.onOfflineCodeRecovered) {
+        try {
+          this.onOfflineCodeRecovered(draft);
+          persistence.clearOfflineDraft();
+        } catch (e) {
+          console.warn('[AutoRejoinManager] Could not forward offline code to the conflict manager; draft kept:', e);
+        }
+      }
       return true;
     } catch (e) {
       console.warn(`[AutoRejoinManager] Rejoin attempt ${this.retryCount} failed:`, e);

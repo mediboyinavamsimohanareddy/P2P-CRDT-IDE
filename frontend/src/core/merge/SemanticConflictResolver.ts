@@ -1,6 +1,7 @@
 import { Conflict, Proposal } from '@decentraide/shared';
 import { AIProvider, OllamaLocalProvider } from '../ai/AIProvider';
 import { JavaAstParser, SemanticASTConflict } from '../ast/JavaAstParser';
+import { MergePlan, VariableConsensusMerger } from '../consensus/VariableConsensusMerger';
 
 export class SemanticConflictResolver {
   private aiProvider: AIProvider;
@@ -9,42 +10,67 @@ export class SemanticConflictResolver {
     this.aiProvider = aiProvider || new OllamaLocalProvider();
   }
 
-  async resolveConflict(conflict: Conflict, astConflict?: SemanticASTConflict | null): Promise<Proposal> {
-    const versions = conflict.versions || [];
-    const astDetails = astConflict || JavaAstParser.compareAST(
-      conflict.filePath,
-      conflict.baseSnippet,
-      versions[0]?.codeSnippet || '',
-      versions[1]?.codeSnippet || ''
+  /** Deterministic vote over the laptops' submitted declarations; no model involved. */
+  public planConsensus(conflict: Conflict, nameFor?: (authorId: string) => string): MergePlan {
+    return VariableConsensusMerger.plan(
+      (conflict.versions || []).map((v) => ({
+        peerId: v.authorId,
+        displayName: nameFor ? nameFor(v.authorId) : v.authorId.substring(0, 8),
+        code: v.codeSnippet,
+      })),
+      conflict.baseSnippet
     );
+  }
 
-    const versionBlocks = versions.map((v, i) => {
-      const peerLabel = `Peer ${i + 1} (${v.authorId?.substring(0, 8) || `User ${String.fromCharCode(65 + i)}`})`;
-      return `${peerLabel}:\n${v.codeSnippet}`;
-    }).join('\n\n');
+  async resolveConflict(
+    conflict: Conflict,
+    astConflict?: SemanticASTConflict | null,
+    nameFor?: (authorId: string) => string
+  ): Promise<Proposal> {
+    const versions = conflict.versions || [];
+    const astDetails =
+      astConflict ||
+      JavaAstParser.compareAST(
+        conflict.filePath,
+        conflict.baseSnippet,
+        versions[0]?.codeSnippet || '',
+        versions[1]?.codeSnippet || ''
+      );
 
-    const prompt = `You are an AI code conflict resolver for multi-developer collaboration.
-A total of ${versions.length} developers edited ${conflict.filePath} concurrently.
-AST Symbol in Conflict: ${astDetails?.affectedSymbol || 'a'} (${astDetails?.explanation || 'Variable value mismatch'})
+    const plan = this.planConsensus(conflict, nameFor);
 
-Base / Target File Snippet:
-${conflict.baseSnippet}
+    const versionBlocks = versions
+      .map((v) => `--- ${nameFor ? nameFor(v.authorId) : v.authorId.substring(0, 8)} ---\n${v.codeSnippet}`)
+      .join('\n\n');
 
-Developer Versions:
+    const votes = plan.contested.length
+      ? plan.contested
+          .map((d) => {
+            const ranked = d.result.candidates
+              .map((c) => `    ${c.codeLine}  <- ${c.peerNames.join(', ')} (${c.userCount} of ${d.result.candidates.reduce((n, x) => n + x.userCount, 0)} laptops)`)
+              .join('\n');
+            return `  ${d.name}: winner "${d.result.winner.codeLine}" (${d.result.basis}). ${d.result.rationale}\n${ranked}`;
+          })
+          .join('\n')
+      : '  No variable has competing declarations.';
+
+    const prompt = `You are merging concurrent edits made by ${versions.length} developers to ${conflict.filePath}.
+
+Each laptop's version of the file:
 ${versionBlocks}
 
-Task:
-1. Examine variable 'a' across all versions.
-2. Evaluate which 'a' value satisfies the code's expected result or logic.
-3. If one 'a' value is logically correct, use that 'a' value.
-4. If NONE of the 3 user values for 'a' are correct, calculate and provide the correct 'a' value required by the program logic.
-5. Return machine-readable JSON matching this EXACT structure:
+Consensus vote already computed for each variable that laptops declared differently
+(majority first; with no majority, the submitted value nearest to the program result):
+${votes}
+
+Rules:
+1. Every variable listed above MUST be declared exactly as its winner line. Do not choose or invent another value.
+2. Keep every other change from the laptops (new variables, new statements) and drop nothing else.
+3. Return only JSON in this shape:
 {
-  "hasConflict": true,
-  "explanation": "concise explanation of which 'a' value was chosen or calculated",
-  "resolvedCode": "the merged java code with the correct 'a' value",
-  "reason": "why this 'a' value is correct",
-  "confidence": 92
+  "resolvedCode": "the complete merged ${conflict.filePath}",
+  "explanation": "one sentence on what was merged",
+  "confidence": <integer 0-100>
 }`;
 
     const response = await this.aiProvider.generateCompletion({
@@ -54,121 +80,73 @@ Task:
       language: 'java',
     });
 
-    let hasConflict = true;
-    let explanation = astDetails?.explanation || '3-Peer \'a\' variable evaluation applied.';
+    const modelUnavailable = /offline fallback/i.test(response.model);
     let resolvedCode = '';
-    let reason = 'Evaluated \'a\' values from all peers and synthesized the correct value.';
-    let aiConfidence = response.confidence;
+    let explanation = '';
+    let aiConfidence: number | null = null;
+    let source = `${response.model}`;
 
-    try {
-      const jsonMatch = response.result.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (typeof parsed.resolvedCode === 'string' && parsed.resolvedCode.trim()) {
-          resolvedCode = parsed.resolvedCode;
-          if (typeof parsed.explanation === 'string') explanation = parsed.explanation;
-          if (typeof parsed.reason === 'string') reason = parsed.reason;
-          if (typeof parsed.confidence === 'number') aiConfidence = parsed.confidence;
-          if (typeof parsed.hasConflict === 'boolean') hasConflict = parsed.hasConflict;
+    if (!modelUnavailable) {
+      try {
+        const jsonMatch = response.result.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (typeof parsed.resolvedCode === 'string' && parsed.resolvedCode.trim()) {
+            resolvedCode = parsed.resolvedCode;
+            if (typeof parsed.explanation === 'string') explanation = parsed.explanation;
+            if (typeof parsed.confidence === 'number') aiConfidence = parsed.confidence;
+          }
         }
+      } catch {
+        // Non-JSON reply; handled below by falling back to the vote.
       }
-    } catch {
-      // Non-JSON or fallback response
     }
 
+    let note: string;
     if (!resolvedCode) {
-      resolvedCode = this.evaluateThreePeerAMerge(conflict);
+      resolvedCode = plan.mergedCode;
+      source = `${response.model} (not used)`;
+      note = modelUnavailable
+        ? 'The AI model was unreachable, so the merge was built directly from the laptops\' vote.'
+        : 'The AI reply could not be read, so the merge was built directly from the laptops\' vote.';
+    } else if (!VariableConsensusMerger.honoursPlan(resolvedCode, plan)) {
+      resolvedCode = plan.mergedCode;
+      source = `${response.model} (overridden)`;
+      note = 'The AI output did not keep the voted values, so the merge was built directly from the laptops\' vote.';
+    } else {
+      note = explanation || 'The AI merged the laptops\' edits and kept every voted value.';
     }
 
-    const computedScore = this.computeScore(conflict, resolvedCode, { confidence: aiConfidence, model: response.model });
+    const voteSummary = plan.contested.length
+      ? plan.contested.map((d) => `${d.name}: ${d.result.rationale}`).join(' ')
+      : 'No contested variables.';
 
     return {
       id: `prop-${Date.now()}`,
       conflictId: conflict.id,
       proposedCode: resolvedCode,
-      rationale: `${explanation} ${reason} (${computedScore.rationale})`,
-      confidence: computedScore.confidence,
-      model: response.model,
-      contextHash: `ast-${astDetails?.affectedSymbol || 'a'}`,
+      rationale: `${note} ${voteSummary}`,
+      confidence: this.computeScore(plan, resolvedCode, aiConfidence),
+      model: source,
+      contextHash: `ast-${astDetails?.affectedSymbol || 'file'}`,
       status: 'pending',
       generatedAt: Date.now(),
     };
   }
 
-  /** Evaluates 'a' values across 3 peers and determines or calculates the correct 'a' value */
-  public evaluateThreePeerAMerge(conflict: Conflict): string {
-    const versions = conflict.versions || [];
-    const baseCode = conflict.baseSnippet || '';
+  /**
+   * Derived from the vote itself: the average share of laptops that backed each contested
+   * winner (100 when nothing was contested), halved when the output has unbalanced brackets.
+   * A model-reported confidence only ever lowers the score.
+   */
+  public computeScore(plan: MergePlan, proposedCode: string, aiConfidence: number | null): number {
+    const shares = plan.contested.map((d) => d.result.winner.majorityPercent);
+    let score = shares.length ? shares.reduce((a, b) => a + b, 0) / shares.length : 100;
 
-    // Extract 'a' values from all versions
-    const aValues: { peerId: string; val: number; line: string }[] = [];
-    versions.forEach((v) => {
-      const match = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
-      if (match) {
-        aValues.push({ peerId: v.authorId, val: parseInt(match[1], 10), line: match[0] });
-      }
-    });
+    const count = (re: RegExp) => (proposedCode.match(re) || []).length;
+    if (count(/[{(\[]/g) !== count(/[})\]]/g)) score /= 2;
+    if (aiConfidence !== null) score = Math.min(score, aiConfidence);
 
-    // Determine target/expected result from comments or code logic (e.g. expected output 100 or result = 100)
-    let expectedTarget = 100;
-    const targetMatch = baseCode.match(/(?:expected|result|target)\s*(?:=|:|\)\s*==|\/\/)?\s*(-?\d+)/i);
-    if (targetMatch) {
-      expectedTarget = parseInt(targetMatch[1], 10);
-    }
-
-    // Check if any peer provided the exact correct 'a' value
-    const correctPeer = aValues.find((item) => item.val === expectedTarget);
-
-    let finalA = expectedTarget;
-    let note = `Calculated correct 'a' = ${finalA} based on target result ${expectedTarget}.`;
-
-    if (correctPeer) {
-      finalA = correctPeer.val;
-      note = `Peer ${correctPeer.peerId.substring(0, 8)} provided the correct 'a' value = ${finalA}.`;
-    }
-
-    // Construct the corrected Java code
-    if (baseCode.includes('class Main')) {
-      return baseCode.replace(/(?:int|double|var)\s+a\s*=\s*-?\d+;?/, `int a = ${finalA}; // Verified correct 'a' value (${note})`);
-    }
-
-    return `// ${note}\nint a = ${finalA};\nint result = a;\nSystem.out.println("Verified correct a = " + a);`;
-  }
-
-  public computeScore(
-    conflict: Conflict,
-    proposedCode: string,
-    aiResponse?: { confidence: number; model: string }
-  ): { confidence: number; rationale: string } {
-    let baseScore = aiResponse?.confidence && aiResponse.confidence > 0 ? aiResponse.confidence : 88;
-    const notes: string[] = [];
-
-    const countBrackets = (code: string) => {
-      const open = (code.match(/[\{\(\[]/g) || []).length;
-      const close = (code.match(/[\}\)\]]/g) || []).length;
-      return open === close;
-    };
-
-    if (countBrackets(proposedCode)) {
-      baseScore += 5;
-      notes.push('Balanced block brackets and syntax scope');
-    } else {
-      baseScore -= 15;
-      notes.push('Unbalanced delimiters detected');
-    }
-
-    if (proposedCode.includes('int a =') || proposedCode.includes('var a =')) {
-      baseScore += 5;
-      notes.push('Successfully synthesized single verified variable \'a\'');
-    }
-
-    const confidence = Math.min(99, Math.max(30, Math.round(baseScore)));
-    const rationale = `Calculated confidence ${confidence}% based on: ${notes.join('; ')}.`;
-
-    return { confidence, rationale };
-  }
-
-  heuristicMerge(conflict: Conflict): string {
-    return this.evaluateThreePeerAMerge(conflict);
+    return Math.max(0, Math.min(100, Math.round(score)));
   }
 }

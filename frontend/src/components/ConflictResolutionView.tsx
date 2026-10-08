@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw, GitMerge, Layers, ShieldCheck, ArrowRightLeft, Code2, Users } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { CheckCircle2, Sparkles, Play, X, RefreshCw, GitMerge, Layers, ShieldCheck, ArrowRightLeft, Code2, Users, Award, Database, Wifi, WifiOff } from 'lucide-react';
 import { VerificationRunner, StageResult } from '../core/merge/VerificationRunner';
 import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 import { OperationLogStore } from '../core/security/OperationLogStore';
@@ -10,6 +10,8 @@ import { OllamaLocalProvider } from '../core/ai/AIProvider';
 import { CollaborationManager } from '../core/sync/CollaborationManager';
 import { Conflict, Proposal } from '@decentraide/shared';
 import { JavaAstParser, SemanticASTConflict } from '../core/ast/JavaAstParser';
+import { MergePlan, parseDeclarations } from '../core/consensus/VariableConsensusMerger';
+import { ThreePeerConsensusPredictor } from '../core/consensus/ThreePeerConsensusPredictor';
 
 export interface ConflictResolutionViewProps {
   crdtEngine?: YjsCrdtEngine;
@@ -22,9 +24,24 @@ export interface PeerVersionCard {
   peerId: string;
   displayName: string;
   codeSnippet: string;
-  aValue: string;
   isHost: boolean;
 }
+
+const STORAGE_KEYS = ['decentraide:active-room-id', 'decentraide:cached-code', 'decentraide:offline-session'] as const;
+
+const readStorage = (): Record<string, string | null> => {
+  const out: Record<string, string | null> = {};
+  for (const key of STORAGE_KEYS) {
+    try {
+      out[key] = window.localStorage.getItem(key);
+    } catch {
+      out[key] = null;
+    }
+  }
+  return out;
+};
+
+const BASIC_MAIN = `public class Main {\n    public static void main(String[] args) {\n    }\n}`;
 
 export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   crdtEngine,
@@ -40,11 +57,13 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   );
 
   const [peerVersions, setPeerVersions] = useState<PeerVersionCard[]>([]);
+  const [plan, setPlan] = useState<MergePlan | null>(null);
+  const [statusNote, setStatusNote] = useState<string | null>(null);
+  const [online, setOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine);
+  const [storage, setStorage] = useState<Record<string, string | null>>(readStorage);
 
   const [aiProposal, setAiProposal] = useState<Proposal | null>(null);
-  const [proposedCode, setProposedCode] = useState<string>(
-    activeCode || `class Main {\n    public static void main(String[] args) {\n        int a = 100; // Calculated correct 'a' value for result = 100\n        int result = a;\n        System.out.println("Verified correct a = " + a);\n    }\n}`
-  );
+  const [proposedCode, setProposedCode] = useState<string>(activeCode || BASIC_MAIN);
   const [selectedPeerId, setSelectedPeerId] = useState<string>('AI');
   const [isVerifying, setIsVerifying] = useState(false);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
@@ -52,6 +71,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   const [allPassed, setAllPassed] = useState(false);
   const [isStaged, setIsStaged] = useState(false);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const aiRequestId = useRef(0);
   const [stages, setStages] = useState<StageResult[]>([
     { stage: 'syntax', label: 'Syntax Validation', status: 'idle' },
     { stage: 'ast', label: 'AST Scope Analysis', status: 'idle' },
@@ -61,139 +81,106 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     { stage: 'tests', label: 'mvn test', status: 'idle' },
   ]);
 
+  const nameFor = (authorId: string): string => {
+    const collab = CollaborationManager.getInstance();
+    const peer = collab.getPeerStore().getPeers().find((p) => p.id === authorId);
+    if (peer) return peer.displayName;
+    return authorId === collab.getIdentity().peerId ? 'You (Local)' : `Laptop ${authorId.substring(0, 6)}`;
+  };
+
+  const applyConflict = (conflict: Conflict, astC?: SemanticASTConflict | null) => {
+    setActiveConflict(conflict);
+    setAstConflict(astC || null);
+    setStatusNote(null);
+
+    const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
+    setPeerVersions(
+      conflict.versions.map((v) => ({
+        peerId: v.authorId,
+        displayName: nameFor(v.authorId),
+        codeSnippet: v.codeSnippet,
+        isHost: roomPeers.find((rp) => rp.id === v.authorId)?.role === 'Host',
+      }))
+    );
+    setPlan(new SemanticConflictResolver().planConsensus(conflict, nameFor));
+    generateAiSolution(conflict, astC);
+  };
+
   // Subscribe to live conflicts
   useEffect(() => {
     const detector = OverlapConflictDetector.getInstance();
-    const updateConflict = (conflict: Conflict, astC?: SemanticASTConflict | null) => {
-      setActiveConflict(conflict);
-      setAstConflict(astC || null);
-      if (conflict.versions && conflict.versions.length > 0) {
-        const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
-        const mapped: PeerVersionCard[] = conflict.versions.map((v, i) => {
-          const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
-          const matchedPeer = roomPeers.find((rp) => rp.id === v.authorId);
-          const displayName = matchedPeer
-            ? matchedPeer.displayName
-            : i === 0
-            ? 'You (Local)'
-            : `Peer ${i} (${v.authorId.substring(0, 6)})`;
-
-          return {
-            peerId: v.authorId,
-            displayName,
-            codeSnippet: v.codeSnippet,
-            aValue: aMatch ? aMatch[1] : 'Unknown',
-            isHost: matchedPeer ? matchedPeer.role === 'Host' : i === 0,
-          };
-        });
-        setPeerVersions(mapped);
-      }
-      generateAiSolution(conflict, astC);
-    };
-
-    const unsub = detector.subscribe(updateConflict);
+    const unsub = detector.subscribe(applyConflict);
     const latest = detector.getLatest();
-    if (latest) {
-      setActiveConflict(latest);
-      const astC = detector.getLatestAstConflict();
-      setAstConflict(astC);
-      if (latest.versions && latest.versions.length > 0) {
-        const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
-        const mapped: PeerVersionCard[] = latest.versions.map((v, i) => {
-          const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
-          const matchedPeer = roomPeers.find((rp) => rp.id === v.authorId);
-          const displayName = matchedPeer
-            ? matchedPeer.displayName
-            : i === 0
-            ? 'You (Local)'
-            : `Peer ${i} (${v.authorId.substring(0, 6)})`;
-
-          return {
-            peerId: v.authorId,
-            displayName,
-            codeSnippet: v.codeSnippet,
-            aValue: aMatch ? aMatch[1] : 'Unknown',
-            isHost: matchedPeer ? matchedPeer.role === 'Host' : i === 0,
-          };
-        });
-        setPeerVersions(mapped);
-      }
-      generateAiSolution(latest, astC);
-    }
-
+    if (latest) applyConflict(latest, detector.getLatestAstConflict());
     return () => unsub();
+  }, []);
+
+  // Mirror the localStorage keys the jury inspects in DevTools while the laptop goes offline and returns.
+  useEffect(() => {
+    const refresh = () => {
+      setOnline(navigator.onLine);
+      setStorage(readStorage());
+    };
+    window.addEventListener('online', refresh);
+    window.addEventListener('offline', refresh);
+    const timer = setInterval(refresh, 1500);
+    return () => {
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('offline', refresh);
+      clearInterval(timer);
+    };
   }, []);
 
   const fetchPeerVersions = async () => {
     setIsFetchingPeers(true);
+    const startedAt = Date.now();
     try {
       const collab = CollaborationManager.getInstance();
-      const peerStates = await collab.fetchPeerState(undefined, activeFilePath);
-      const localCode = collab.getCrdtEngine().getText(activeFilePath).toString();
+      const versions = await collab.refreshConflictAnalysis(activeFilePath);
+      const detector = OverlapConflictDetector.getInstance();
+      const latest = detector.getLatest();
 
-      const versionsList: { authorId: string; opHash: string; codeSnippet: string; line: number }[] = [
-        { authorId: collab.getIdentity().peerId, opHash: 'local', codeSnippet: localCode, line: 1 },
-      ];
-
-      peerStates.forEach((ps, index) => {
-        versionsList.push({
-          authorId: ps.peerId || `peer-${index + 2}`,
-          opHash: `remote-${index}`,
-          codeSnippet: ps.code || 'int a = 20;',
-          line: 1,
-        });
-      });
-
-      const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
-      const mappedCards: PeerVersionCard[] = versionsList.map((v, i) => {
-        const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
-        const matchedPeer = roomPeers.find((rp) => rp.id === v.authorId);
-        const displayName = matchedPeer
-          ? matchedPeer.displayName
-          : i === 0
-          ? 'You (Local)'
-          : `Peer ${i} (${v.authorId.substring(0, 6)})`;
-
-        return {
-          peerId: v.authorId,
-          displayName,
-          codeSnippet: v.codeSnippet,
-          aValue: aMatch ? aMatch[1] : 'Unknown',
-          isHost: matchedPeer ? matchedPeer.role === 'Host' : i === 0,
-        };
-      });
-      setPeerVersions(mappedCards);
-
-      const currentConflict: Conflict = {
-        id: `conflict-${Date.now()}`,
-        filePath: activeFilePath,
-        detectedAt: Date.now(),
-        baseSnippet: localCode,
-        versions: versionsList,
-      };
-
-      const computedAst = JavaAstParser.compareAST(activeFilePath, localCode, localCode, versionsList[1]?.codeSnippet || '');
-      setActiveConflict(currentConflict);
-      setAstConflict(computedAst);
-      await generateAiSolution(currentConflict, computedAst);
-    } catch {
-      // Fallback
+      if (latest && latest.detectedAt >= startedAt) {
+        applyConflict(latest, detector.getLatestAstConflict());
+      } else {
+        const roomPeers = collab.getPeerStore().getPeers();
+        setPeerVersions(
+          versions.map((v) => ({
+            peerId: v.peerId,
+            displayName: nameFor(v.peerId),
+            codeSnippet: v.code,
+            isHost: roomPeers.find((rp) => rp.id === v.peerId)?.role === 'Host',
+          }))
+        );
+        setPlan(null);
+        setStatusNote(
+          versions.length < 2
+            ? 'No other laptop answered, so there is nothing to compare yet.'
+            : `All ${versions.length} laptops hold identical ${activeFilePath}; the CRDT has converged and there is no conflict.`
+        );
+      }
+    } catch (e) {
+      setStatusNote(`Could not collect peer versions: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsFetchingPeers(false);
     }
   };
 
   const generateAiSolution = async (conflict: Conflict, astC?: SemanticASTConflict | null) => {
+    const requestId = ++aiRequestId.current;
     setIsGeneratingAi(true);
     try {
       const resolver = new SemanticConflictResolver(new OllamaLocalProvider());
-      const proposal = await resolver.resolveConflict(conflict, astC);
+      const proposal = await resolver.resolveConflict(conflict, astC, nameFor);
+      if (requestId !== aiRequestId.current) return;
       setAiProposal(proposal);
       setProposedCode(proposal.proposedCode);
-    } catch {
-      // Fallback
+    } catch (e) {
+      if (requestId === aiRequestId.current) {
+        setStatusNote(`Merge proposal failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
-      setIsGeneratingAi(false);
+      if (requestId === aiRequestId.current) setIsGeneratingAi(false);
     }
   };
 
@@ -232,6 +219,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     }
 
     await collab.broadcastVerifiedMerge(undefined, activeFilePath);
+    OverlapConflictDetector.getInstance().clear();
 
     const currentHash = crdtEngine ? crdtEngine.computeWorkspaceHash() : 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
@@ -274,11 +262,12 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
               </h1>
               <span className="bg-status-pass/20 text-status-pass text-[10px] px-2 py-0.5 rounded font-mono font-bold border border-status-pass/30 flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                Ollama Mistral / Live 'a' Value Evaluation
+                Majority vote + AI merge
               </span>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
-              Side-by-side analysis of 'a' values across all connected laptops. Ollama evaluates which user provided the correct 'a' value, or calculates the correct 'a' if all are wrong.
+              Each contested variable is decided from the values the laptops actually submitted: a majority wins; with no
+              majority, the submitted value nearest to the program result wins. The AI merges the rest of the file around that decision.
             </p>
           </div>
         </div>
@@ -293,45 +282,142 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         </button>
       </div>
 
+      {/* Offline storage the jury inspects in DevTools */}
+      <div className="bg-bg-dark border border-status-info/30 rounded-lg p-4 flex flex-col gap-2 shadow-md">
+        <div className="flex items-center gap-2 text-xs font-semibold text-gray-100">
+          {online ? <Wifi className="w-4 h-4 text-status-pass" /> : <WifiOff className="w-4 h-4 text-status-warn" />}
+          <span>Local storage (DevTools &rarr; Application &rarr; Local Storage)</span>
+          <span
+            className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold border ${
+              online
+                ? 'bg-status-pass/20 text-status-pass border-status-pass/30'
+                : 'bg-status-warn/20 text-status-warn border-status-warn/30'
+            }`}
+          >
+            {online ? 'ONLINE' : 'OFFLINE - edits are being saved locally'}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-[11px] font-mono bg-bg-darkest p-3 rounded border border-border-subtle">
+          {STORAGE_KEYS.map((key) => (
+            <div key={key} className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-gray-400 font-sans font-semibold flex items-center gap-1">
+                <Database className="w-3 h-3 text-status-info" />
+                <code className="text-accent-mint">{key}</code>
+              </span>
+              <span className="text-gray-200 truncate">{storage[key] ?? '(not set)'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Dynamic Peer Side-by-Side Comparison Cards */}
       <div className="flex items-center gap-2 text-xs font-semibold text-gray-300">
         <Users className="w-4 h-4 text-status-info" />
         <span>
           {peerVersions.length === 0
-            ? 'No conflicts active / Click "Fetch All Connected Peer Versions" to inspect live peer code:'
-            : `Connected Peer Versions (${peerVersions.length} Available Replicas):`}
+            ? 'No conflict detected yet. Conflicts appear here when laptops hold different code, or click "Fetch All Connected Peer Versions".'
+            : `Laptop versions (${peerVersions.length}):`}
         </span>
       </div>
 
+      {statusNote && (
+        <div className="bg-bg-dark border border-border-subtle rounded p-2.5 text-xs text-gray-300 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-status-info flex-shrink-0" />
+          <span>{statusNote}</span>
+        </div>
+      )}
+
       {peerVersions.length > 0 && (
         <div className="grid grid-cols-3 gap-4">
-          {peerVersions.map((card, idx) => (
-            <div
-              key={card.peerId + idx}
-              onClick={() => {
-                setSelectedPeerId(card.peerId);
-                setProposedCode(card.codeSnippet);
-              }}
-              className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-all ${
-                selectedPeerId === card.peerId
-                  ? 'border-accent-mint bg-accent-mint/5 shadow-lg'
-                  : 'border-border-subtle hover:border-gray-600'
-              }`}
-            >
-              <div className="flex items-center justify-between text-xs border-b border-border-subtle pb-2">
-                <span className="font-semibold text-gray-200 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-status-info" />
-                  {card.displayName}
-                </span>
-                <span className="text-[10px] text-accent-mint font-mono bg-bg-darkest px-2 py-0.5 rounded font-bold">
-                  a = {card.aValue}
-                </span>
+          {peerVersions.map((card, idx) => {
+            const declared = parseDeclarations(card.codeSnippet);
+            const wins = (plan?.contested ?? []).filter((d) => {
+              const line = declared.get(d.name)?.line;
+              return line !== undefined && ThreePeerConsensusPredictor.normalizeLine(line) === d.result.winner.normalizedLine;
+            });
+            return (
+              <div
+                key={card.peerId + idx}
+                onClick={() => {
+                  setSelectedPeerId(card.peerId);
+                  setProposedCode(card.codeSnippet);
+                }}
+                className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-all ${
+                  selectedPeerId === card.peerId
+                    ? 'border-accent-mint bg-accent-mint/5 shadow-lg'
+                    : 'border-border-subtle hover:border-gray-600'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs border-b border-border-subtle pb-2">
+                  <span className="font-semibold text-gray-200 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-status-info" />
+                    {card.displayName}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    {card.isHost && (
+                      <span className="text-[10px] bg-accent-purple/20 text-accent-purple border border-accent-purple/40 px-1.5 py-0.5 rounded font-mono font-semibold">
+                        Host
+                      </span>
+                    )}
+                    {wins.length > 0 && (
+                      <span className="text-[10px] text-accent-mint font-bold bg-accent-mint/20 border border-accent-mint/40 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Award className="w-3 h-3" /> Won: {wins.map((d) => d.name).join(', ')}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <pre className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap leading-relaxed min-h-[90px]">
+                  {card.codeSnippet}
+                </pre>
               </div>
-              <pre className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap leading-relaxed min-h-[90px]">
-                {card.codeSnippet}
-              </pre>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      )}
+
+      {/* Consensus vote per contested variable */}
+      {plan && (
+        <div className="bg-bg-dark border border-accent-mint/30 rounded-lg p-3.5 flex flex-col gap-3 shadow-md">
+          <div className="flex items-center gap-2 border-b border-border-subtle pb-2 text-xs font-semibold text-gray-200">
+            <Award className="w-4 h-4 text-accent-mint" />
+            <span>Consensus vote among the laptops' submitted values</span>
+            {plan.referenceResult !== null && (
+              <span className="text-[10px] font-mono text-gray-400">program result = {plan.referenceResult}</span>
+            )}
+          </div>
+          {plan.contested.length === 0 ? (
+            <p className="text-[11px] text-gray-400">
+              No variable is declared differently across laptops, so there is nothing to vote on. The files differ elsewhere and are merged by the AI.
+            </p>
+          ) : (
+            plan.contested.map((d) => (
+              <div key={d.name} className="flex flex-col gap-1.5 bg-bg-darkest p-2.5 rounded border border-border-subtle">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-mono text-gray-200">
+                    variable <strong className="text-accent-mint">{d.name}</strong> &rarr;{' '}
+                    <strong className="text-status-pass">{d.result.winner.codeLine}</strong>
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-accent-mint/20 text-accent-mint border border-accent-mint/30 font-bold">
+                    {d.result.basis.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-400">{d.result.rationale}</p>
+                <div className="flex flex-col gap-0.5 text-[11px] font-mono text-gray-300">
+                  {d.result.candidates.map((c) => (
+                    <div key={c.normalizedLine} className="flex items-center justify-between">
+                      <span>
+                        {c.codeLine} <span className="text-gray-500">&larr; {c.peerNames.join(', ')}</span>
+                      </span>
+                      <span className="text-gray-400">
+                        {c.userCount} laptop{c.userCount === 1 ? '' : 's'} &middot; {c.majorityPercent}%
+                        {c.distance !== null && <> &middot; distance {c.distance}</>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
 
@@ -339,20 +425,20 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       <div className="bg-bg-dark border border-border-subtle rounded-lg p-3 flex flex-col gap-2 shadow">
         <div className="flex items-center gap-2 text-xs font-semibold text-status-info border-b border-border-subtle pb-1.5">
           <Code2 className="w-4 h-4 text-status-info" />
-          <span>AST Scope &amp; 'a' Variable Value Verification</span>
+          <span>AST Scope &amp; Concurrent Edit Analysis</span>
         </div>
         <div className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded border border-border-subtle flex flex-col gap-1 text-gray-300">
           <div>
-            <span className="text-gray-400 font-semibold">Target Variable:</span>{' '}
-            <span className="text-accent-mint font-bold">a</span> (evaluated across available peer submissions)
+            <span className="text-gray-400 font-semibold">Target File:</span>{' '}
+            <span className="text-accent-mint font-bold">{activeConflict?.filePath || activeFilePath}</span>
           </div>
           <div>
-            <span className="text-gray-400 font-semibold">Submitted Values:</span>{' '}
-            <span>{peerVersions.map((p) => `${p.displayName}: a=${p.aValue}`).join(' | ')}</span>
+            <span className="text-gray-400 font-semibold">Conflict Region / Symbol:</span>{' '}
+            <span>{astConflict?.affectedSymbol || 'none detected'}</span>
           </div>
           <div>
-            <span className="text-gray-400 font-semibold">Verification Strategy:</span>{' '}
-            <span className="text-status-warn">Checking which 'a' value yields target code logic; if none are correct, Ollama calculates the correct 'a' value.</span>
+            <span className="text-gray-400 font-semibold">AST Explanation:</span>{' '}
+            <span className="text-status-warn">{astConflict?.explanation || 'No concurrent modification detected.'}</span>
           </div>
         </div>
       </div>
@@ -362,7 +448,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         <div className="flex items-center justify-between border-b border-border-subtle pb-2">
           <div className="flex items-center gap-2 font-semibold text-xs text-gray-200">
             <Sparkles className="w-4 h-4 text-accent-mint" />
-            <span>Ollama AI Correct 'a' Value Evaluation &amp; Resolution</span>
+            <span>Ollama AI Semantic Code Merge &amp; Resolution</span>
             {isGeneratingAi && <RefreshCw className="w-3.5 h-3.5 text-accent-mint animate-spin ml-2" />}
           </div>
           <span className="text-[11px] font-mono">
@@ -387,7 +473,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-accent-mint flex items-center gap-1">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Calculated AI Confidence / Resolution Score:
+                Merge confidence (share of laptops backing each voted value):
               </span>
               <span className="font-bold font-mono text-status-pass text-sm">
                 {aiProposal.confidence}%

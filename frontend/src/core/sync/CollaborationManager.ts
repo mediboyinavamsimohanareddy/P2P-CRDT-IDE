@@ -66,6 +66,8 @@ function yDocHasFileContent(engine: YjsCrdtEngine): boolean {
   return keys.some((key) => key !== 'metadata' && engine.getText(key).length > 0);
 }
 
+const MAX_PEER_CODE_LENGTH = 200_000;
+
 type PendingRemoteFrame = { peerId: string; frameObj: unknown };
 
 export class CollaborationManager {
@@ -135,9 +137,26 @@ export class CollaborationManager {
     this.setupTransportListeners();
     this.setupCrdtListeners();
 
-    AutoRejoinManager.getInstance().setTriggerRejoinHandler(async (session) => {
+    const autoRejoin = AutoRejoinManager.getInstance();
+    autoRejoin.setTriggerRejoinHandler(async (session) => {
       await this.resumeActiveSession(session.roomId);
     });
+    autoRejoin.setDraftProvider(() =>
+      this.currentRoomId
+        ? {
+            roomId: this.currentRoomId,
+            peerId: this.identity.peerId,
+            displayName: this.peerStore.getPeers().find((p) => p.id === this.identity.peerId)?.displayName,
+            code: this.crdtEngine.getText(this.activeFilePath).toString(),
+            filePath: this.activeFilePath,
+            isHost: this.isHost,
+          }
+        : null
+    );
+    autoRejoin.setOfflineCodeRecoveredHandler((draft) => {
+      OverlapConflictDetector.getInstance().noteLocalEdit(this.identity.peerId, draft.filePath, draft.code);
+    });
+    autoRejoin.resumeIfDraftPending();
 
     // Populate initial default Main.java Java template in CRDT engine if empty
     if (this.crdtEngine.getText('Main.java').length === 0) {
@@ -237,6 +256,8 @@ export class CollaborationManager {
     const payloadObj = {
       u: uint8ArrayToBase64(update),
       filePath,
+      code: this.crdtEngine.getText(filePath).toString(),
+      resolved: true,
     };
     const frameBytes = this.sealFrame('crdt.update', payloadObj);
     await this.transportManager.broadcast(frameBytes);
@@ -287,6 +308,31 @@ export class CollaborationManager {
     });
 
     return Promise.all(promises);
+  }
+
+  /**
+   * Collects the current code of this laptop and every connected laptop for a file and
+   * feeds them to the conflict detector. Laptops that did not answer are left out, so a
+   * silent peer never shows up as a copy of the local code.
+   */
+  public async refreshConflictAnalysis(
+    filePath = this.activeFilePath
+  ): Promise<{ peerId: string; code: string }[]> {
+    const localCode = this.crdtEngine.getText(filePath).toString();
+    const peerStates = (await this.fetchPeerState(undefined, filePath)).filter(
+      (s) => s.versionHash !== 'timeout-fallback'
+    );
+
+    const detector = OverlapConflictDetector.getInstance();
+    detector.noteLocalEdit(this.identity.peerId, filePath, localCode);
+    for (const state of peerStates) {
+      detector.noteRemoteEdit(state.peerId, filePath, state.code);
+    }
+
+    return [
+      { peerId: this.identity.peerId, code: localCode },
+      ...peerStates.map((s) => ({ peerId: s.peerId, code: s.code })),
+    ];
   }
 
   /**
@@ -670,21 +716,21 @@ export class CollaborationManager {
       const updateBytes = base64ToUint8Array(payloadObj.u);
       if (isEmptyYjsUpdate(updateBytes)) return;
 
-      this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
-      OperationLogStore.getInstance().logAppliedOp(
-        peerId,
-        'UPDATE',
-        (typeof payloadObj.filePath === 'string' ? payloadObj.filePath : null) || this.activeFilePath
-      );
+      const filePath =
+        (typeof payloadObj.filePath === 'string' ? payloadObj.filePath : null) || this.activeFilePath;
+      // Capture both sides before the CRDT merges them; afterwards every laptop would look identical.
+      const localBeforeMerge = this.crdtEngine.getText(filePath).toString();
 
-      if (result.type === 'crdt.update') {
-        const filePath =
-          (typeof payloadObj.filePath === 'string' ? payloadObj.filePath : null) || this.activeFilePath;
-        OverlapConflictDetector.getInstance().noteRemoteEdit(
-          peerId,
-          filePath,
-          this.crdtEngine.getText(filePath).toString()
-        );
+      this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
+      OperationLogStore.getInstance().logAppliedOp(peerId, 'UPDATE', filePath);
+
+      if (payloadObj.resolved === true) {
+        // A verified merge settles the conflict; the sender's code is the resolution, not a competing version.
+        OverlapConflictDetector.getInstance().clear();
+      } else if (typeof payloadObj.code === 'string') {
+        const detector = OverlapConflictDetector.getInstance();
+        detector.noteLocalEdit(this.identity.peerId, filePath, localBeforeMerge);
+        detector.noteRemoteEdit(peerId, filePath, payloadObj.code.slice(0, MAX_PEER_CODE_LENGTH));
       }
 
       this.saveSnapshotDebounced();
@@ -704,6 +750,7 @@ export class CollaborationManager {
         this.activeFilePath,
         this.crdtEngine.getText(this.activeFilePath).toString()
       );
+      AutoRejoinManager.getInstance().persistDraftIfOffline();
 
       if (!this.hasRoomKey || this.connectedPeers.size === 0) {
         this.opLogManager.enqueueLocalUpdate(update);
@@ -729,6 +776,7 @@ export class CollaborationManager {
         const payloadObj = {
           u: uint8ArrayToBase64(op.update),
           filePath: this.activeFilePath,
+          code: this.crdtEngine.getText(this.activeFilePath).toString(),
         };
         const frameBytes = this.sealFrame('crdt.update', payloadObj);
         this.transportManager.broadcast(frameBytes).catch(() => {});
@@ -780,6 +828,7 @@ export class CollaborationManager {
       const payloadObj = {
         u: uint8ArrayToBase64(diff),
         filePath: this.activeFilePath,
+        code: this.crdtEngine.getText(this.activeFilePath).toString(),
       };
       const frameBytes = this.sealFrame('crdt.syncStep2', payloadObj);
       this.transportManager.send(peerId, frameBytes).catch(() => {});
