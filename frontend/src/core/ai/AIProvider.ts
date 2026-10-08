@@ -3,6 +3,7 @@ export interface AIRequestOptions {
   codeContext?: string;
   language?: string;
   task: 'generate' | 'explain' | 'debug' | 'refactor' | 'tests';
+  timeoutMs?: number;
 }
 
 export interface AIResponse {
@@ -36,9 +37,11 @@ export class OllamaLocalProvider implements AIProvider {
       ? `Task: ${options.task}\nLanguage: ${options.language || 'java'}\nContext:\n${options.codeContext}\n\nPrompt: ${options.prompt}`
       : `Task: ${options.task}\nLanguage: ${options.language || 'java'}\n\nPrompt: ${options.prompt}`;
 
+    const timeout = options.timeoutMs || 30000;
+
     try {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), timeout) : null;
 
       const fetchOptions: RequestInit = {
         method: 'POST',
@@ -51,12 +54,10 @@ export class OllamaLocalProvider implements AIProvider {
       };
 
       if (controller?.signal) {
-        // Use timeout signal if available or pass controller signal without failing on undici environment mismatch
-        const signal = controller.signal;
         if (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal && typeof (AbortSignal as unknown as { timeout?: unknown }).timeout === 'function') {
-          fetchOptions.signal = AbortSignal.timeout(5000);
+          fetchOptions.signal = AbortSignal.timeout(timeout);
         } else {
-          fetchOptions.signal = signal;
+          fetchOptions.signal = controller.signal;
         }
       }
 
