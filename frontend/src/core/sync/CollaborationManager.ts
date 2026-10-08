@@ -139,6 +139,10 @@ export class CollaborationManager {
       await this.resumeActiveSession(session.roomId);
     });
 
+    AutoRejoinManager.getInstance().setOfflineCodeRecoveredHandler((draft) => {
+      this.forwardOfflineCodeToConflictDetector(draft.code, draft.filePath, draft.integerValue);
+    });
+
     // Populate initial default Main.java Java template in CRDT engine if empty
     if (this.crdtEngine.getText('Main.java').length === 0) {
       const initialMainJava = `class Main {
@@ -242,6 +246,37 @@ export class CollaborationManager {
     await this.transportManager.broadcast(frameBytes);
     this.announceHash();
     return true;
+  }
+
+  /**
+   * Forwards recovered offline code directly into the OverlapConflictDetector,
+   * testing it against the code held by the other laptops in the session.
+   */
+  public forwardOfflineCodeToConflictDetector(
+    code: string,
+    filePath = this.activeFilePath,
+    integerValue?: number
+  ): Conflict {
+    return OverlapConflictDetector.getInstance().triggerReconnectedTest(
+      this.identity.peerId,
+      code,
+      filePath,
+      integerValue,
+      'Reconnected Laptop (Local)'
+    );
+  }
+
+  /**
+   * Checks for peers that have been offline longer than timeoutMs.
+   * If any peer exceeded the timeout, removes them and forwards only
+   * the other 2 laptops' code to the conflict detector.
+   */
+  public checkPeerOfflineTimeouts(timeoutMs = 20000): string[] {
+    const timedOut = this.peerStore.checkOfflineTimeouts(timeoutMs);
+    for (const pid of timedOut) {
+      OverlapConflictDetector.getInstance().handlePeerOfflineTimeout(pid);
+    }
+    return timedOut;
   }
 
   /**
@@ -482,6 +517,7 @@ export class CollaborationManager {
         SessionStatusStore.getInstance().patch({ phase: 'connecting', converged: false });
       }
       if (state === 'connected') {
+        this.peerStore.markPeerConnected(peerId);
         AutoRejoinManager.getInstance().resetRetryCount();
         this.connectedPeers.add(peerId);
         this.syncStep1Sent.delete(peerId);
@@ -494,6 +530,7 @@ export class CollaborationManager {
         }
       }
       if (state === 'offline') {
+        this.peerStore.markPeerOffline(peerId);
         this.connectedPeers.delete(peerId);
         this.syncStep1Sent.delete(peerId);
         
@@ -698,11 +735,25 @@ export class CollaborationManager {
       const originTag = typeof origin === 'string' ? origin : '';
       if (originTag.startsWith('remote') || originTag === 'local-persistence') return;
 
+      const currentCode = this.crdtEngine.getText(this.activeFilePath).toString();
       this.saveSnapshotDebounced();
+      this.persistenceManager.saveCachedCode(currentCode);
+      if (this.currentRoomId) {
+        this.persistenceManager.saveActiveRoomId(this.currentRoomId);
+        this.persistenceManager.saveDevToolsOfflineDraft({
+          roomId: this.currentRoomId,
+          peerId: this.identity.peerId,
+          code: currentCode,
+          filePath: this.activeFilePath,
+          isHost: this.isHost,
+          lastSavedAt: Date.now(),
+          isOffline: this.connectedPeers.size === 0,
+        });
+      }
       OverlapConflictDetector.getInstance().noteLocalEdit(
         this.identity.peerId,
         this.activeFilePath,
-        this.crdtEngine.getText(this.activeFilePath).toString()
+        currentCode
       );
 
       if (!this.hasRoomKey || this.connectedPeers.size === 0) {

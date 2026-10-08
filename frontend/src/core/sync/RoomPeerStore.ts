@@ -7,6 +7,8 @@ export interface ConnectedPeer {
   status: 'connected' | 'connecting' | 'offline';
   activity: string;
   color: string;
+  offlineSince?: number | null;
+  offlineTimedOut?: boolean;
 }
 
 export class RoomPeerStore {
@@ -99,6 +101,64 @@ export class RoomPeerStore {
     const remotePeers = connectedPeers.filter((p) => p.status === 'connected' && p.id !== this.localPeerId);
     this.peers = local ? [local, ...remotePeers] : connectedPeers.filter((p) => p.status === 'connected');
     this.notify();
+  }
+
+  markPeerOffline(peerId: string): void {
+    const peer = this.peers.find((p) => p.id === peerId);
+    if (peer) {
+      peer.status = 'offline';
+      peer.offlineSince = Date.now();
+      peer.offlineTimedOut = false;
+      this.notify();
+    }
+  }
+
+  markPeerConnected(peerId: string): void {
+    const peer = this.peers.find((p) => p.id === peerId);
+    if (peer) {
+      peer.status = 'connected';
+      peer.offlineSince = null;
+      peer.offlineTimedOut = false;
+      this.notify();
+    }
+  }
+
+  /**
+   * Checks whether any offline peer has exceeded the offline timeout (e.g. 20s).
+   * Marks them timed out and returns their peer IDs.
+   */
+  checkOfflineTimeouts(timeoutMs = 20000): string[] {
+    const now = Date.now();
+    const timedOutIds: string[] = [];
+
+    for (const peer of this.peers) {
+      if (
+        peer.status === 'offline' &&
+        peer.offlineSince &&
+        !peer.offlineTimedOut &&
+        now - peer.offlineSince >= timeoutMs
+      ) {
+        peer.offlineTimedOut = true;
+        timedOutIds.push(peer.id);
+      }
+    }
+
+    if (timedOutIds.length > 0) {
+      this.notify();
+    }
+    return timedOutIds;
+  }
+
+  triggerPeerOfflineTimeout(peerId: string): boolean {
+    const peer = this.peers.find((p) => p.id === peerId);
+    if (peer) {
+      peer.status = 'offline';
+      peer.offlineSince = Date.now() - 30000; // Force expired
+      peer.offlineTimedOut = true;
+      this.notify();
+      return true;
+    }
+    return false;
   }
 
   subscribe(listener: () => void): () => void {

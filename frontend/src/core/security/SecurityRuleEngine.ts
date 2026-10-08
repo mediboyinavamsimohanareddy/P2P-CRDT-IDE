@@ -122,14 +122,26 @@ export class SecurityRuleEngine {
     },
     {
       id: 'SEC-009',
-      category: 'Destructive File/Database Operation',
-      title: 'Destructive File or Table Deletion',
+      category: 'Production Database Deletion',
+      title: 'Production Database Destruction / Wipe Attempt',
       severity: 'CRITICAL' as const,
-      regex: /(?:rm\s+-rf|Files\.delete|DROP\s+TABLE|TRUNCATE\s+TABLE|format\s+[c-z]:)/i,
-      explanation: 'Performing un-gated bulk file deletion or database drops leads to unrecoverable data loss.',
-      recommendation: 'Require explicit user confirmation prompts and backup checkpoints before executing destructive operations.',
+      regex: /(?:DROP\s+(?:DATABASE|SCHEMA|TABLE)|TRUNCATE\s+(?:TABLE)?|DELETE\s+FROM\s+\w+\s*(?:;|$)|deleteAll\s*\(\s*\)|createNativeQuery\s*\(\s*["'](?:DROP|TRUNCATE|DELETE)|format\s+[c-z]:)/i,
+      explanation: 'Code contains destructive commands to DROP, truncate, or wipe production databases or tables, risking catastrophic data loss.',
+      recommendation: 'Block production database deletion and require strict manual migration scripts with verified backups.',
       generateFix: (code: string, match: RegExpExecArray) => {
-        return code.replace(match[0], '// SECURE: Confirmation required before deletion\n    // ' + match[0]);
+        return code.replace(match[0], '// BLOCKED MALICIOUS DB OPERATION: ' + match[0]);
+      },
+    },
+    {
+      id: 'SEC-010',
+      category: 'Destructive System Operation',
+      title: 'Destructive OS Command Execution or Termination',
+      severity: 'CRITICAL' as const,
+      regex: /(?:rm\s+-rf|del\s+\/[fF]\s+\/[sS]|Files\.deleteIfExists\s*\(\s*Paths\.get\s*\(\s*["']\/|System\.exit\s*\()/i,
+      explanation: 'Executing bulk filesystem wipes (e.g. rm -rf) or forcibly aborting the host JVM leads to system crash or data loss.',
+      recommendation: 'Remove destructive command invocations and protect root filesystem directories.',
+      generateFix: (code: string, match: RegExpExecArray) => {
+        return code.replace(match[0], '// BLOCKED DESTRUCTIVE OS OPERATION: ' + match[0]);
       },
     },
   ];

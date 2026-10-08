@@ -21,6 +21,18 @@ export interface ActiveSessionMetadata {
   savedAt: number;
 }
 
+export interface OfflineSessionDraft {
+  roomId: string;
+  peerId: string;
+  displayName?: string;
+  code: string;
+  integerValue?: number;
+  filePath: string;
+  isHost: boolean;
+  lastSavedAt: number;
+  isOffline: boolean;
+}
+
 let nodeFsPromises: typeof import('fs').promises | null = null;
 function getFsPromises(): typeof import('fs').promises | null {
   if (nodeFsPromises) return nodeFsPromises;
@@ -238,5 +250,92 @@ export class LocalPersistenceManager {
       console.error('Failed to append op log:', e);
       return false;
     }
+  }
+
+  /**
+   * Saves offline draft into DevTools-visible localStorage keys:
+   * - decentraide:offline-session
+   * - decentraide:active-room-id
+   * - decentraide:cached-code
+   * - decentraide:user-integer-val
+   */
+  saveDevToolsOfflineDraft(draft: OfflineSessionDraft): void {
+    if (this.hasLocalStorage()) {
+      window.localStorage.setItem('decentraide:offline-session', JSON.stringify(draft));
+      window.localStorage.setItem('decentraide:active-room-id', draft.roomId || '');
+      window.localStorage.setItem('decentraide:cached-code', draft.code || '');
+      if (typeof draft.integerValue === 'number') {
+        window.localStorage.setItem('decentraide:user-integer-val', draft.integerValue.toString());
+      }
+    }
+  }
+
+  /**
+   * Retrieves offline session draft from DevTools-visible localStorage.
+   */
+  getDevToolsOfflineDraft(): OfflineSessionDraft | null {
+    if (this.hasLocalStorage()) {
+      const raw = window.localStorage.getItem('decentraide:offline-session');
+      if (raw) {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          // ignore corrupted JSON
+        }
+      }
+      const roomId = window.localStorage.getItem('decentraide:active-room-id');
+      const code = window.localStorage.getItem('decentraide:cached-code');
+      const intVal = window.localStorage.getItem('decentraide:user-integer-val');
+      if (roomId || code) {
+        return {
+          roomId: roomId || '',
+          peerId: 'peer-offline',
+          code: code || '',
+          integerValue: intVal ? parseInt(intVal, 10) : 0,
+          filePath: 'Main.java',
+          isHost: false,
+          lastSavedAt: Date.now(),
+          isOffline: true,
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Clears DevTools-visible offline draft keys upon successful sync.
+   */
+  clearDevToolsOfflineDraft(): void {
+    if (this.hasLocalStorage()) {
+      window.localStorage.removeItem('decentraide:offline-session');
+      window.localStorage.removeItem('decentraide:cached-code');
+      window.localStorage.removeItem('decentraide:user-integer-val');
+    }
+  }
+
+  saveActiveRoomId(roomId: string): void {
+    if (this.hasLocalStorage()) {
+      window.localStorage.setItem('decentraide:active-room-id', roomId);
+    }
+  }
+
+  getActiveRoomId(): string | null {
+    if (this.hasLocalStorage()) {
+      return window.localStorage.getItem('decentraide:active-room-id');
+    }
+    return null;
+  }
+
+  saveCachedCode(code: string): void {
+    if (this.hasLocalStorage()) {
+      window.localStorage.setItem('decentraide:cached-code', code);
+    }
+  }
+
+  getCachedCode(): string | null {
+    if (this.hasLocalStorage()) {
+      return window.localStorage.getItem('decentraide:cached-code');
+    }
+    return null;
   }
 }
