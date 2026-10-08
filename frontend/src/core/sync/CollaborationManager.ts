@@ -730,8 +730,9 @@ export class CollaborationManager {
         // A verified merge settles the conflict
         OverlapConflictDetector.getInstance().clear();
       } else if (typeof payloadObj.code === 'string') {
+        const currentLocalCode = this.crdtEngine.getText(filePath).toString();
         const detector = OverlapConflictDetector.getInstance();
-        detector.noteLocalEdit(this.identity.peerId, filePath, localBeforeMerge);
+        detector.noteLocalEdit(this.identity.peerId, filePath, currentLocalCode);
         detector.noteRemoteEdit(peerId, filePath, payloadObj.code.slice(0, MAX_PEER_CODE_LENGTH));
       }
 
@@ -754,16 +755,12 @@ export class CollaborationManager {
       );
       AutoRejoinManager.getInstance().persistDraftIfOffline();
 
-      if (!this.hasRoomKey || this.connectedPeers.size === 0) {
-        this.opLogManager.enqueueLocalUpdate(update);
-        this.announceHash();
-        return;
-      }
-
-      // Live keystroke update broadcasting is disabled.
-      // Edits update Yjs locally and queue up for verified explicit merge broadcasts / sync.
       this.opLogManager.enqueueLocalUpdate(update);
       this.announceHash();
+
+      if (this.hasRoomKey && this.connectedPeers.size > 0) {
+        this.flushPendingOps();
+      }
     });
   }
 

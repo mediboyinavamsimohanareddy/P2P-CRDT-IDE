@@ -175,7 +175,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           peerId: v.peerId,
           displayName: nameFor(v.peerId),
           codeSnippet: v.peerId === localPeerId && activeCode ? activeCode : v.code,
-          isHost: roomPeers.find((rp) => rp.id === v.authorId)?.role === 'Host',
+          isHost: roomPeers.find((rp) => rp.id === v.peerId)?.role === 'Host',
         }));
         setPeerVersions(mappedPeerVersions);
         setPlan(null);

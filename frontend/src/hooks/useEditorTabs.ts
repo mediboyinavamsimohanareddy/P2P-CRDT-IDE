@@ -59,8 +59,10 @@ export function useEditorTabs() {
       } else if (window.electronAPI) {
         // Asynchronously load content later if needed, but initialize synchronously or fetch
         content = '';
+      } else if (filePath.endsWith('.java')) {
+        content = `class Main {\n    public static void main(String[] args) {\n        int b = 20;\n        int result = 50;\n\n        System.out.println("b = " + b);\n        System.out.println("result = " + result);\n    }\n}\n`;
       } else {
-        content = `// Mock content for ${filePath}`;
+        content = `// Content for ${filePath}`;
       }
 
       const fileName = filePath.split(/[/\\]/).pop() || filePath;
