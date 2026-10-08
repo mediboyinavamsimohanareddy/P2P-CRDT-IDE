@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
 import { CrdtEngine } from './CrdtEngine';
+import { OverlapConflictDetector } from '../merge/OverlapConflictDetector';
 
 /** Apply a character-level diff instead of wiping the whole Y.Text. */
 function applyTextDiff(yText: Y.Text, next: string): void {
@@ -121,6 +122,17 @@ export class CrdtMonacoBinding {
     this.engine.getDoc().transact(() => {
       applyTextDiff(this.yText, newContent);
     }, 'monaco-local');
+
+    if (typeof window !== 'undefined') {
+      const collab = (window as any).__collaborationManager;
+      if (collab && collab.getIdentity) {
+        OverlapConflictDetector.getInstance().noteLocalEdit(
+          collab.getIdentity().peerId,
+          this.path,
+          newContent
+        );
+      }
+    }
   }
 
   destroy(): void {

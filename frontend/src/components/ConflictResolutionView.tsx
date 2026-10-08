@@ -93,12 +93,14 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     setAstConflict(astC || null);
     setStatusNote(null);
 
-    const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
+    const collab = CollaborationManager.getInstance();
+    const roomPeers = collab.getPeerStore().getPeers();
+    const localPeerId = collab.getIdentity().peerId;
     setPeerVersions(
       conflict.versions.map((v) => ({
         peerId: v.authorId,
         displayName: nameFor(v.authorId),
-        codeSnippet: v.codeSnippet,
+        codeSnippet: v.authorId === localPeerId && activeCode ? activeCode : v.codeSnippet,
         isHost: roomPeers.find((rp) => rp.id === v.authorId)?.role === 'Host',
       }))
     );
@@ -118,6 +120,26 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     }
     return () => unsub();
   }, []);
+
+  // Sync live activeCode editor changes to OverlapConflictDetector and local peer version card
+  useEffect(() => {
+    if (!activeCode || !activeFilePath) return;
+    const collab = CollaborationManager.getInstance();
+    const localPeerId = collab.getIdentity().peerId;
+    const detector = OverlapConflictDetector.getInstance();
+
+    detector.noteLocalEdit(localPeerId, activeFilePath, activeCode);
+
+    setPeerVersions((prev) => {
+      if (prev.length === 0) return prev;
+      return prev.map((p) => {
+        if (p.peerId === localPeerId || p.displayName.includes('You')) {
+          return { ...p, codeSnippet: activeCode };
+        }
+        return p;
+      });
+    });
+  }, [activeCode, activeFilePath]);
 
   // Mirror the localStorage keys the jury inspects in DevTools while the laptop goes offline and returns.
   useEffect(() => {
@@ -148,32 +170,37 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         applyConflict(latest, detector.getLatestAstConflict());
       } else {
         const roomPeers = collab.getPeerStore().getPeers();
-        setPeerVersions(
-          versions.map((v) => ({
-            peerId: v.peerId,
-            displayName: nameFor(v.peerId),
-            codeSnippet: v.code,
-            isHost: roomPeers.find((rp) => rp.id === v.peerId)?.role === 'Host',
-          }))
-        );
+        const localPeerId = collab.getIdentity().peerId;
+        const mappedPeerVersions = versions.map((v) => ({
+          peerId: v.peerId,
+          displayName: nameFor(v.peerId),
+          codeSnippet: v.peerId === localPeerId && activeCode ? activeCode : v.code,
+          isHost: roomPeers.find((rp) => rp.id === v.authorId)?.role === 'Host',
+        }));
+        setPeerVersions(mappedPeerVersions);
         setPlan(null);
-        if (versions.length >= 2) {
-          const firstCode = versions[0].code;
-          const hasDiff = versions.some((v) => v.code !== firstCode);
+        if (mappedPeerVersions.length >= 2) {
+          const firstCode = mappedPeerVersions[0].codeSnippet;
+          const hasDiff = mappedPeerVersions.some((v) => v.codeSnippet !== firstCode);
           if (hasDiff) {
             const conflict: Conflict = {
-              id: `overlap-${Date.now()}-${versions.length}`,
+              id: `overlap-${Date.now()}-${mappedPeerVersions.length}`,
               filePath: activeFilePath,
               detectedAt: Date.now(),
               baseSnippet: firstCode,
-              versions: versions.map((v) => ({
+              versions: mappedPeerVersions.map((v) => ({
                 authorId: v.peerId,
                 opHash: `peer-${v.peerId}`,
-                codeSnippet: v.code,
+                codeSnippet: v.codeSnippet,
                 line: 1,
               })),
             };
-            const astC = JavaAstParser.compareAST(activeFilePath, firstCode, versions[0].code, versions[1]?.code || '');
+            const astC = JavaAstParser.compareAST(
+              activeFilePath,
+              firstCode,
+              mappedPeerVersions[0].codeSnippet,
+              mappedPeerVersions[1]?.codeSnippet || ''
+            );
             applyConflict(conflict, astC);
             return;
           }

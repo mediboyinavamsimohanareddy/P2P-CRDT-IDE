@@ -65,8 +65,26 @@ export class OverlapConflictDetector {
   }
 
   noteLocalEdit(peerId: string, filePath: string, snippet: string): void {
+    if (this.localPeerId && this.localPeerId !== peerId) {
+      this.versions.delete(`${filePath}\u0000${this.localPeerId}`);
+    }
     this.localPeerId = peerId;
     this.noteVersion(peerId, filePath, snippet);
+  }
+
+  /**
+   * Prunes version entries for a file, retaining only those associated with currently active peers.
+   * Eliminates stale/ghost peer versions from previous sessions or rejoins.
+   */
+  pruneToActivePeers(filePath: string, activePeerIds: string[]): void {
+    const activeSet = new Set(activePeerIds);
+    if (this.localPeerId) activeSet.add(this.localPeerId);
+
+    for (const [key, version] of this.versions.entries()) {
+      if (version.filePath === filePath && !activeSet.has(version.peerId)) {
+        this.versions.delete(key);
+      }
+    }
   }
 
   noteRemoteEdit(peerId: string, filePath: string, snippet: string): void {

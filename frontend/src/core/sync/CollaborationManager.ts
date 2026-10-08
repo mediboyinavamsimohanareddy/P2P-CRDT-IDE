@@ -158,9 +158,9 @@ export class CollaborationManager {
     });
     autoRejoin.resumeIfDraftPending();
 
-    // Populate initial default Main.java Java template in CRDT engine if empty
-    if (this.crdtEngine.getText('Main.java').length === 0) {
-      const initialMainJava = `class Main {
+    if (this.isHost) {
+      if (this.crdtEngine.getText('Main.java').length === 0) {
+        const initialMainJava = `class Main {
     public static void main(String[] args) {
 
         int b = 20;
@@ -171,7 +171,8 @@ export class CollaborationManager {
     }
 }
 `;
-      this.crdtEngine.getText('Main.java').insert(0, initialMainJava);
+        this.crdtEngine.getText('Main.java').insert(0, initialMainJava);
+      }
     }
   }
 
@@ -323,7 +324,10 @@ export class CollaborationManager {
       (s) => s.versionHash !== 'timeout-fallback'
     );
 
+    const activePeerIds = [this.identity.peerId, ...peerStates.map((s) => s.peerId)];
+
     const detector = OverlapConflictDetector.getInstance();
+    detector.pruneToActivePeers(filePath, activePeerIds);
     detector.noteLocalEdit(this.identity.peerId, filePath, localCode);
     for (const state of peerStates) {
       detector.noteRemoteEdit(state.peerId, filePath, state.code);
@@ -437,12 +441,10 @@ export class CollaborationManager {
       this.opLogManager.clearPending();
       this.verifier = new ConvergenceVerifier(this.crdtEngine, this.identity.peerId);
     } else if (!this.isHost) {
-      // Clear host starter template on joining peers ONLY if Y.Doc hasn't loaded a locally persisted snapshot
-      if (!yDocHasFileContent(this.crdtEngine)) {
-        const text = this.crdtEngine.getText('Main.java');
-        if (text.length > 0) {
-          text.delete(0, text.length);
-        }
+      // Joining peers clear any locally generated default template so they don't duplicate host code upon receiving initial state
+      const text = this.crdtEngine.getText('Main.java');
+      if (text.length > 0) {
+        text.delete(0, text.length);
       }
     }
 
