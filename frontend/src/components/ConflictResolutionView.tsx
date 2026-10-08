@@ -106,12 +106,16 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     generateAiSolution(conflict, astC);
   };
 
-  // Subscribe to live conflicts
+  // Subscribe to live conflicts and fetch initial peer states
   useEffect(() => {
     const detector = OverlapConflictDetector.getInstance();
     const unsub = detector.subscribe(applyConflict);
     const latest = detector.getLatest();
-    if (latest) applyConflict(latest, detector.getLatestAstConflict());
+    if (latest) {
+      applyConflict(latest, detector.getLatestAstConflict());
+    } else {
+      fetchPeerVersions();
+    }
     return () => unsub();
   }, []);
 
@@ -153,6 +157,27 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           }))
         );
         setPlan(null);
+        if (versions.length >= 2) {
+          const firstCode = versions[0].code;
+          const hasDiff = versions.some((v) => v.code !== firstCode);
+          if (hasDiff) {
+            const conflict: Conflict = {
+              id: `overlap-${Date.now()}-${versions.length}`,
+              filePath: activeFilePath,
+              detectedAt: Date.now(),
+              baseSnippet: firstCode,
+              versions: versions.map((v) => ({
+                authorId: v.peerId,
+                opHash: `peer-${v.peerId}`,
+                codeSnippet: v.code,
+                line: 1,
+              })),
+            };
+            const astC = JavaAstParser.compareAST(activeFilePath, firstCode, versions[0].code, versions[1]?.code || '');
+            applyConflict(conflict, astC);
+            return;
+          }
+        }
         setStatusNote(
           versions.length < 2
             ? 'No other laptop answered, so there is nothing to compare yet.'
