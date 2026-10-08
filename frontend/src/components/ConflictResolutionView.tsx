@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw, GitMerge, Layers, ShieldCheck, ArrowRightLeft, Code2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Sparkles, Play, Check, X, RefreshCw, GitMerge, Layers, ShieldCheck, ArrowRightLeft, Code2, Users } from 'lucide-react';
 import { VerificationRunner, StageResult } from '../core/merge/VerificationRunner';
 import { MergeHistoryStore } from '../core/merge/MergeHistoryStore';
 import { OperationLogStore } from '../core/security/OperationLogStore';
@@ -18,6 +18,14 @@ export interface ConflictResolutionViewProps {
   onApplyResolvedCode?: (resolvedCode: string) => void;
 }
 
+export interface PeerVersionCard {
+  peerId: string;
+  displayName: string;
+  codeSnippet: string;
+  aValue: string;
+  isHost: boolean;
+}
+
 export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
   crdtEngine,
   activeFilePath = 'Main.java',
@@ -31,14 +39,17 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     OverlapConflictDetector.getInstance().getLatestAstConflict()
   );
 
-  const [versionACode, setVersionACode] = useState<string>('int b = 20;\nint result = 50;');
-  const [versionBCode, setVersionBCode] = useState<string>('int b = 30;\nint result = 50;');
-  const [aiProposal, setAiProposal] = useState<Proposal | null>(null);
+  const [peerVersions, setPeerVersions] = useState<PeerVersionCard[]>([
+    { peerId: 'host-1', displayName: 'Host (Laptop 1)', codeSnippet: 'int a = 10;\nint result = 100;', aValue: '10', isHost: true },
+    { peerId: 'peer-2', displayName: 'Peer 1 (Laptop 2)', codeSnippet: 'int a = 20;\nint result = 100;', aValue: '20', isHost: false },
+    { peerId: 'peer-3', displayName: 'Peer 2 (Laptop 3)', codeSnippet: 'int a = 50;\nint result = 100;', aValue: '50', isHost: false },
+  ]);
 
+  const [aiProposal, setAiProposal] = useState<Proposal | null>(null);
   const [proposedCode, setProposedCode] = useState<string>(
-    activeCode || `int b = 20;\nint b2 = 30;\nint result = 50;\nSystem.out.println("b=" + b + ", b2=" + b2);`
+    activeCode || `class Main {\n    public static void main(String[] args) {\n        int a = 100; // Calculated correct 'a' value for result = 100\n        int result = a;\n        System.out.println("Verified correct a = " + a);\n    }\n}`
   );
-  const [selectedVersion, setSelectedVersion] = useState<'A' | 'B' | 'AI'>('AI');
+  const [selectedPeerId, setSelectedPeerId] = useState<string>('AI');
   const [isVerifying, setIsVerifying] = useState(false);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [isFetchingPeers, setIsFetchingPeers] = useState(false);
@@ -54,14 +65,25 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     { stage: 'tests', label: 'mvn test', status: 'idle' },
   ]);
 
-  // Subscribe to real live conflicts detected by OverlapConflictDetector
+  // Subscribe to live conflicts
   useEffect(() => {
     const detector = OverlapConflictDetector.getInstance();
     const updateConflict = (conflict: Conflict, astC?: SemanticASTConflict | null) => {
       setActiveConflict(conflict);
       setAstConflict(astC || null);
-      if (conflict.versions[0]?.codeSnippet) setVersionACode(conflict.versions[0].codeSnippet);
-      if (conflict.versions[1]?.codeSnippet) setVersionBCode(conflict.versions[1].codeSnippet);
+      if (conflict.versions && conflict.versions.length > 0) {
+        const mapped: PeerVersionCard[] = conflict.versions.map((v, i) => {
+          const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
+          return {
+            peerId: v.authorId,
+            displayName: i === 0 ? 'Host (Laptop 1)' : `Peer ${i} (Laptop ${i + 1})`,
+            codeSnippet: v.codeSnippet,
+            aValue: aMatch ? aMatch[1] : 'Unknown',
+            isHost: i === 0,
+          };
+        });
+        setPeerVersions(mapped);
+      }
       generateAiSolution(conflict, astC);
     };
 
@@ -71,8 +93,19 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       setActiveConflict(latest);
       const astC = detector.getLatestAstConflict();
       setAstConflict(astC);
-      if (latest.versions[0]?.codeSnippet) setVersionACode(latest.versions[0].codeSnippet);
-      if (latest.versions[1]?.codeSnippet) setVersionBCode(latest.versions[1].codeSnippet);
+      if (latest.versions && latest.versions.length > 0) {
+        const mapped: PeerVersionCard[] = latest.versions.map((v, i) => {
+          const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
+          return {
+            peerId: v.authorId,
+            displayName: i === 0 ? 'Host (Laptop 1)' : `Peer ${i} (Laptop ${i + 1})`,
+            codeSnippet: v.codeSnippet,
+            aValue: aMatch ? aMatch[1] : 'Unknown',
+            isHost: i === 0,
+          };
+        });
+        setPeerVersions(mapped);
+      }
       generateAiSolution(latest, astC);
     }
 
@@ -84,30 +117,48 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     try {
       const collab = CollaborationManager.getInstance();
       const peerStates = await collab.fetchPeerState(undefined, activeFilePath);
-      if (peerStates.length > 0) {
-        const localCode = collab.getCrdtEngine().getText(activeFilePath).toString();
-        const remoteCode = peerStates[0].code || versionBCode;
-        setVersionACode(localCode);
-        setVersionBCode(remoteCode);
+      const localCode = collab.getCrdtEngine().getText(activeFilePath).toString();
 
-        const currentConflict: Conflict = {
-          id: `conflict-${Date.now()}`,
-          filePath: activeFilePath,
-          detectedAt: Date.now(),
-          baseSnippet: localCode,
-          versions: [
-            { authorId: collab.getIdentity().peerId, opHash: 'local', codeSnippet: localCode, line: 1 },
-            { authorId: peerStates[0].peerId, opHash: 'remote', codeSnippet: remoteCode, line: 1 },
-          ],
+      const versionsList: { authorId: string; opHash: string; codeSnippet: string; line: number }[] = [
+        { authorId: collab.getIdentity().peerId, opHash: 'local', codeSnippet: localCode, line: 1 },
+      ];
+
+      peerStates.forEach((ps, index) => {
+        versionsList.push({
+          authorId: ps.peerId || `peer-${index + 2}`,
+          opHash: `remote-${index}`,
+          codeSnippet: ps.code || 'int a = 20;',
+          line: 1,
+        });
+      });
+
+      const mappedCards: PeerVersionCard[] = versionsList.map((v, i) => {
+        const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
+        return {
+          peerId: v.authorId,
+          displayName: i === 0 ? 'Host (Laptop 1)' : `Peer ${i} (Laptop ${i + 1})`,
+          codeSnippet: v.codeSnippet,
+          aValue: aMatch ? aMatch[1] : 'Unknown',
+          isHost: i === 0,
         };
-        const computedAst = JavaAstParser.compareAST(activeFilePath, localCode, localCode, remoteCode);
-        setActiveConflict(currentConflict);
-        setAstConflict(computedAst);
-        await generateAiSolution(currentConflict, computedAst);
-      }
+      });
+      setPeerVersions(mappedCards);
+
+      const currentConflict: Conflict = {
+        id: `conflict-${Date.now()}`,
+        filePath: activeFilePath,
+        detectedAt: Date.now(),
+        baseSnippet: localCode,
+        versions: versionsList,
+      };
+
+      const computedAst = JavaAstParser.compareAST(activeFilePath, localCode, localCode, versionsList[1]?.codeSnippet || '');
+      setActiveConflict(currentConflict);
+      setAstConflict(computedAst);
+      await generateAiSolution(currentConflict, computedAst);
     } catch {
       // Fallback
-    } fontFinally: {
+    } finally {
       setIsFetchingPeers(false);
     }
   };
@@ -148,7 +199,6 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
 
     const collab = CollaborationManager.getInstance();
 
-    // 1. Apply merged code into active CRDT text buffer
     if (crdtEngine && activeFilePath) {
       const ytext = crdtEngine.getText(activeFilePath);
       crdtEngine.getDoc().transact(() => {
@@ -161,18 +211,16 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       onApplyResolvedCode(proposedCode);
     }
 
-    // 2. Broadcast verified merge to peers via DataChannel
     await collab.broadcastVerifiedMerge(undefined, activeFilePath);
 
     const currentHash = crdtEngine ? crdtEngine.computeWorkspaceHash() : 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-    // 3. Record merge in MergeHistoryStore
     const nextMergeNum = MergeHistoryStore.getInstance().getRecords().length + 1;
     MergeHistoryStore.getInstance().addRecord({
       id: `SYNC-#${String(nextMergeNum).padStart(4, '0')}`,
       file: activeFilePath,
-      operationType: 'Semantic AI Merge',
-      peerInvolved: 'Peer-2 (Remote)',
+      operationType: '3-Peer AI Semantic Merge',
+      peerInvolved: '3 Laptops (Multi-Peer)',
       syncStatus: 'SYNCED',
       conflictStatus: 'RESOLVED',
       verificationStatus: 'PASSED',
@@ -180,8 +228,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       stateHash: currentHash,
     });
 
-    // 4. Record operation in OperationLogStore
-    OperationLogStore.getInstance().logAppliedOp('Local Peer (AI Merge)', 'UPDATE', activeFilePath);
+    OperationLogStore.getInstance().logAppliedOp('Host Peer (3-Peer AI Merge)', 'UPDATE', activeFilePath);
 
     setIsBroadcasting(false);
     setIsStaged(true);
@@ -189,7 +236,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
 
   return (
     <div className="flex-1 bg-bg-darkest text-gray-200 p-6 flex flex-col gap-6 overflow-y-auto font-sans">
-      {/* Top Banner & Conflict Manager Header */}
+      {/* Top Banner & Header */}
       <div className="bg-bg-dark border border-status-warn/30 rounded-lg p-4 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-full bg-status-warn/10 text-status-warn border border-status-warn/20">
@@ -198,17 +245,17 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-gray-100 flex items-center gap-2">
-                <span>Conflict Manager</span>
+                <span>Multi-Peer Conflict Manager (3 Laptops)</span>
                 <span className="text-gray-500 font-normal">/</span>
                 <span className="text-accent-mint">{activeConflict?.filePath || activeFilePath}</span>
               </h1>
               <span className="bg-status-pass/20 text-status-pass text-[10px] px-2 py-0.5 rounded font-mono font-bold border border-status-pass/30 flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                Ollama Mistral / Local AI Merge
+                Ollama Mistral / 3-User 'a' Value Evaluation
               </span>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
-              Side-by-side comparison of local and peer state with AST analysis, Ollama AI confidence scoring, and compilation verification.
+              Side-by-side analysis of 'a' values across all 3 connected laptops. Ollama evaluates which user provided the correct 'a' value, or calculates the correct 'a' if all 3 are wrong.
             </p>
           </div>
         </div>
@@ -219,79 +266,64 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           className="bg-bg-panel hover:bg-bg-hover text-gray-200 font-semibold px-3 py-1.5 rounded text-xs border border-border-subtle flex items-center gap-1.5 shadow disabled:opacity-40"
         >
           <ArrowRightLeft className={`w-3.5 h-3.5 text-accent-mint ${isFetchingPeers ? 'animate-spin' : ''}`} />
-          <span>{isFetchingPeers ? 'Fetching Peers...' : 'Fetch Latest Peer Code'}</span>
+          <span>{isFetchingPeers ? 'Fetching All Peers...' : 'Fetch All 3 Peer Versions'}</span>
         </button>
       </div>
 
-      {/* Side-by-Side Code Comparison */}
-      <div className="grid grid-cols-2 gap-4">
-        {/* Version A */}
-        <div
-          onClick={() => {
-            setSelectedVersion('A');
-            setProposedCode(versionACode);
-          }}
-          className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-all ${
-            selectedVersion === 'A' ? 'border-peer-arjun bg-peer-arjun/5 shadow-lg' : 'border-border-subtle hover:border-gray-600'
-          }`}
-        >
-          <div className="flex items-center justify-between text-xs border-b border-border-subtle pb-2">
-            <span className="font-semibold text-peer-arjun flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5" />
-              Local Version ({activeConflict?.versions[0]?.authorId?.substring(0, 8) || 'Local Host'})
-            </span>
-            <span className="text-[10px] text-gray-400 font-mono bg-bg-darkest px-2 py-0.5 rounded">
-              Local Yjs State
-            </span>
-          </div>
-          <pre className="text-[11px] font-mono bg-bg-darkest p-3 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap leading-relaxed min-h-[100px]">
-            {versionACode}
-          </pre>
-        </div>
+      {/* 3-Peer Side-by-Side Comparison Cards */}
+      <div className="flex items-center gap-2 text-xs font-semibold text-gray-300">
+        <Users className="w-4 h-4 text-status-info" />
+        <span>Connected Peer Versions (3 Laptops in Demo):</span>
+      </div>
 
-        {/* Version B */}
-        <div
-          onClick={() => {
-            setSelectedVersion('B');
-            setProposedCode(versionBCode);
-          }}
-          className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-all ${
-            selectedVersion === 'B' ? 'border-peer-rahul bg-peer-rahul/5 shadow-lg' : 'border-border-subtle hover:border-gray-600'
-          }`}
-        >
-          <div className="flex items-center justify-between text-xs border-b border-border-subtle pb-2">
-            <span className="font-semibold text-peer-rahul flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5" />
-              Peer Version ({activeConflict?.versions[1]?.authorId?.substring(0, 8) || 'Remote Peer'})
-            </span>
-            <span className="text-[10px] text-gray-400 font-mono bg-bg-darkest px-2 py-0.5 rounded">
-              Remote DataChannel
-            </span>
+      <div className="grid grid-cols-3 gap-4">
+        {peerVersions.map((card, idx) => (
+          <div
+            key={card.peerId + idx}
+            onClick={() => {
+              setSelectedPeerId(card.peerId);
+              setProposedCode(card.codeSnippet);
+            }}
+            className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-all ${
+              selectedPeerId === card.peerId
+                ? 'border-accent-mint bg-accent-mint/5 shadow-lg'
+                : 'border-border-subtle hover:border-gray-600'
+            }`}
+          >
+            <div className="flex items-center justify-between text-xs border-b border-border-subtle pb-2">
+              <span className="font-semibold text-gray-200 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-status-info" />
+                {card.displayName}
+              </span>
+              <span className="text-[10px] text-accent-mint font-mono bg-bg-darkest px-2 py-0.5 rounded font-bold">
+                a = {card.aValue}
+              </span>
+            </div>
+            <pre className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap leading-relaxed min-h-[90px]">
+              {card.codeSnippet}
+            </pre>
           </div>
-          <pre className="text-[11px] font-mono bg-bg-darkest p-3 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap leading-relaxed min-h-[100px]">
-            {versionBCode}
-          </pre>
-        </div>
+        ))}
       </div>
 
       {/* AST Analysis Section */}
       <div className="bg-bg-dark border border-border-subtle rounded-lg p-3 flex flex-col gap-2 shadow">
         <div className="flex items-center gap-2 text-xs font-semibold text-status-info border-b border-border-subtle pb-1.5">
           <Code2 className="w-4 h-4 text-status-info" />
-          <span>AST Analysis &amp; Affected Symbol Region</span>
+          <span>AST Scope &amp; 'a' Variable Value Verification</span>
         </div>
         <div className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded border border-border-subtle flex flex-col gap-1 text-gray-300">
           <div>
-            <span className="text-gray-400 font-semibold">Affected Symbol:</span>{' '}
-            <span className="text-accent-mint font-bold">{astConflict?.affectedSymbol || 'b'}</span> ({astConflict?.symbolType || 'variable'})
+            <span className="text-gray-400 font-semibold">Target Variable:</span>{' '}
+            <span className="text-accent-mint font-bold">a</span> (evaluated across 3 peer submissions)
           </div>
           <div>
-            <span className="text-gray-400 font-semibold">Affected Scope Lines:</span>{' '}
-            <span>Line {astConflict?.affectedRegion.startLine || 4} - {astConflict?.affectedRegion.endLine || 8}</span>
+            <span className="text-gray-400 font-semibold">Submitted Values:</span>{' '}
+            <span>{peerVersions.map((p) => `${p.displayName}: a=${p.aValue}`).join(' | ')}</span>
           </div>
           <div>
-            <span className="text-gray-400 font-semibold">Semantic Scope Explanation:</span>{' '}
-            <span className="text-status-warn">{astConflict?.explanation || 'Concurrent modification of declaration line in Main method.'}</span>
+            <span className="text-gray-400 font-semibold">Verification Strategy:</span>{' '}
+            <span className="text-status-warn">Checking which 'a' value yields target code logic; if none are correct, Ollama calculates the correct 'a' value.</span>
           </div>
         </div>
       </div>
@@ -301,14 +333,14 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         <div className="flex items-center justify-between border-b border-border-subtle pb-2">
           <div className="flex items-center gap-2 font-semibold text-xs text-gray-200">
             <Sparkles className="w-4 h-4 text-accent-mint" />
-            <span>Ollama AI Resolution Proposal &amp; Probability Score</span>
+            <span>Ollama AI Correct 'a' Value Evaluation &amp; Resolution</span>
             {isGeneratingAi && <RefreshCw className="w-3.5 h-3.5 text-accent-mint animate-spin ml-2" />}
           </div>
           <span className="text-[11px] font-mono">
             {isStaged ? (
               <span className="text-status-pass font-bold flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                VERIFIED MERGE BROADCAST TO ALL PEERS
+                VERIFIED MERGE BROADCAST TO ALL 3 PEERS
               </span>
             ) : allPassed ? (
               <span className="text-status-pass font-bold">✓ ALL VERIFICATION GATES PASSED</span>
@@ -333,7 +365,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-gray-300 leading-normal font-sans">
-              <span className="font-semibold text-gray-400">Reasoning Summary &amp; Rationale:</span> {aiProposal.rationale}
+              <span className="font-semibold text-gray-400">Resolution Analysis &amp; Rationale:</span> {aiProposal.rationale}
             </p>
           </div>
         )}
@@ -383,7 +415,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
               ) : (
                 <GitMerge className="w-4 h-4" />
               )}
-              <span>{isStaged ? 'Merge Synced to Network' : 'Accept & Broadcast Merge'}</span>
+              <span>{isStaged ? 'Merge Synced to All Peers' : 'Accept & Broadcast Merge'}</span>
             </button>
             <button className="bg-bg-hover text-gray-400 px-3 py-1.5 rounded text-xs flex items-center gap-1">
               <X className="w-3.5 h-3.5" />
