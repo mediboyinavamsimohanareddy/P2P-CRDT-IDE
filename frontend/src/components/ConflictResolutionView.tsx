@@ -39,11 +39,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
     OverlapConflictDetector.getInstance().getLatestAstConflict()
   );
 
-  const [peerVersions, setPeerVersions] = useState<PeerVersionCard[]>([
-    { peerId: 'host-1', displayName: 'Host (Laptop 1)', codeSnippet: 'int a = 10;\nint result = 100;', aValue: '10', isHost: true },
-    { peerId: 'peer-2', displayName: 'Peer 1 (Laptop 2)', codeSnippet: 'int a = 20;\nint result = 100;', aValue: '20', isHost: false },
-    { peerId: 'peer-3', displayName: 'Peer 2 (Laptop 3)', codeSnippet: 'int a = 50;\nint result = 100;', aValue: '50', isHost: false },
-  ]);
+  const [peerVersions, setPeerVersions] = useState<PeerVersionCard[]>([]);
 
   const [aiProposal, setAiProposal] = useState<Proposal | null>(null);
   const [proposedCode, setProposedCode] = useState<string>(
@@ -72,14 +68,22 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       setActiveConflict(conflict);
       setAstConflict(astC || null);
       if (conflict.versions && conflict.versions.length > 0) {
+        const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
         const mapped: PeerVersionCard[] = conflict.versions.map((v, i) => {
           const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
+          const matchedPeer = roomPeers.find((rp) => rp.id === v.authorId);
+          const displayName = matchedPeer
+            ? matchedPeer.displayName
+            : i === 0
+            ? 'You (Local)'
+            : `Peer ${i} (${v.authorId.substring(0, 6)})`;
+
           return {
             peerId: v.authorId,
-            displayName: i === 0 ? 'Host (Laptop 1)' : `Peer ${i} (Laptop ${i + 1})`,
+            displayName,
             codeSnippet: v.codeSnippet,
             aValue: aMatch ? aMatch[1] : 'Unknown',
-            isHost: i === 0,
+            isHost: matchedPeer ? matchedPeer.role === 'Host' : i === 0,
           };
         });
         setPeerVersions(mapped);
@@ -94,14 +98,22 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       const astC = detector.getLatestAstConflict();
       setAstConflict(astC);
       if (latest.versions && latest.versions.length > 0) {
+        const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
         const mapped: PeerVersionCard[] = latest.versions.map((v, i) => {
           const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
+          const matchedPeer = roomPeers.find((rp) => rp.id === v.authorId);
+          const displayName = matchedPeer
+            ? matchedPeer.displayName
+            : i === 0
+            ? 'You (Local)'
+            : `Peer ${i} (${v.authorId.substring(0, 6)})`;
+
           return {
             peerId: v.authorId,
-            displayName: i === 0 ? 'Host (Laptop 1)' : `Peer ${i} (Laptop ${i + 1})`,
+            displayName,
             codeSnippet: v.codeSnippet,
             aValue: aMatch ? aMatch[1] : 'Unknown',
-            isHost: i === 0,
+            isHost: matchedPeer ? matchedPeer.role === 'Host' : i === 0,
           };
         });
         setPeerVersions(mapped);
@@ -132,14 +144,22 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         });
       });
 
+      const roomPeers = CollaborationManager.getInstance().getPeerStore().getPeers();
       const mappedCards: PeerVersionCard[] = versionsList.map((v, i) => {
         const aMatch = v.codeSnippet.match(/(?:int|double|var)\s+a\s*=\s*(-?\d+)/);
+        const matchedPeer = roomPeers.find((rp) => rp.id === v.authorId);
+        const displayName = matchedPeer
+          ? matchedPeer.displayName
+          : i === 0
+          ? 'You (Local)'
+          : `Peer ${i} (${v.authorId.substring(0, 6)})`;
+
         return {
           peerId: v.authorId,
-          displayName: i === 0 ? 'Host (Laptop 1)' : `Peer ${i} (Laptop ${i + 1})`,
+          displayName,
           codeSnippet: v.codeSnippet,
           aValue: aMatch ? aMatch[1] : 'Unknown',
-          isHost: i === 0,
+          isHost: matchedPeer ? matchedPeer.role === 'Host' : i === 0,
         };
       });
       setPeerVersions(mappedCards);
@@ -215,12 +235,15 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
 
     const currentHash = crdtEngine ? crdtEngine.computeWorkspaceHash() : 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
+    const connectedCount = CollaborationManager.getInstance().getPeerStore().getConnectedPeerCount();
+    const peerInvolvedLabel = `${connectedCount} Connected ${connectedCount === 1 ? 'Peer' : 'Peers'} (Dynamic)`;
+
     const nextMergeNum = MergeHistoryStore.getInstance().getRecords().length + 1;
     MergeHistoryStore.getInstance().addRecord({
       id: `SYNC-#${String(nextMergeNum).padStart(4, '0')}`,
       file: activeFilePath,
-      operationType: '3-Peer AI Semantic Merge',
-      peerInvolved: '3 Laptops (Multi-Peer)',
+      operationType: 'Dynamic Multi-Peer AI Semantic Merge',
+      peerInvolved: peerInvolvedLabel,
       syncStatus: 'SYNCED',
       conflictStatus: 'RESOLVED',
       verificationStatus: 'PASSED',
@@ -228,7 +251,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
       stateHash: currentHash,
     });
 
-    OperationLogStore.getInstance().logAppliedOp('Host Peer (3-Peer AI Merge)', 'UPDATE', activeFilePath);
+    OperationLogStore.getInstance().logAppliedOp(`Host Peer (${peerInvolvedLabel})`, 'UPDATE', activeFilePath);
 
     setIsBroadcasting(false);
     setIsStaged(true);
@@ -245,17 +268,17 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-gray-100 flex items-center gap-2">
-                <span>Multi-Peer Conflict Manager (3 Laptops)</span>
+                <span>Multi-Peer Conflict Manager</span>
                 <span className="text-gray-500 font-normal">/</span>
                 <span className="text-accent-mint">{activeConflict?.filePath || activeFilePath}</span>
               </h1>
               <span className="bg-status-pass/20 text-status-pass text-[10px] px-2 py-0.5 rounded font-mono font-bold border border-status-pass/30 flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                Ollama Mistral / 3-User 'a' Value Evaluation
+                Ollama Mistral / Live 'a' Value Evaluation
               </span>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
-              Side-by-side analysis of 'a' values across all 3 connected laptops. Ollama evaluates which user provided the correct 'a' value, or calculates the correct 'a' if all 3 are wrong.
+              Side-by-side analysis of 'a' values across all connected laptops. Ollama evaluates which user provided the correct 'a' value, or calculates the correct 'a' if all are wrong.
             </p>
           </div>
         </div>
@@ -266,45 +289,51 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
           className="bg-bg-panel hover:bg-bg-hover text-gray-200 font-semibold px-3 py-1.5 rounded text-xs border border-border-subtle flex items-center gap-1.5 shadow disabled:opacity-40"
         >
           <ArrowRightLeft className={`w-3.5 h-3.5 text-accent-mint ${isFetchingPeers ? 'animate-spin' : ''}`} />
-          <span>{isFetchingPeers ? 'Fetching All Peers...' : 'Fetch All 3 Peer Versions'}</span>
+          <span>{isFetchingPeers ? 'Fetching All Peers...' : 'Fetch All Connected Peer Versions'}</span>
         </button>
       </div>
 
-      {/* 3-Peer Side-by-Side Comparison Cards */}
+      {/* Dynamic Peer Side-by-Side Comparison Cards */}
       <div className="flex items-center gap-2 text-xs font-semibold text-gray-300">
         <Users className="w-4 h-4 text-status-info" />
-        <span>Connected Peer Versions (3 Laptops in Demo):</span>
+        <span>
+          {peerVersions.length === 0
+            ? 'No conflicts active / Click "Fetch All Connected Peer Versions" to inspect live peer code:'
+            : `Connected Peer Versions (${peerVersions.length} Available Replicas):`}
+        </span>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        {peerVersions.map((card, idx) => (
-          <div
-            key={card.peerId + idx}
-            onClick={() => {
-              setSelectedPeerId(card.peerId);
-              setProposedCode(card.codeSnippet);
-            }}
-            className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-all ${
-              selectedPeerId === card.peerId
-                ? 'border-accent-mint bg-accent-mint/5 shadow-lg'
-                : 'border-border-subtle hover:border-gray-600'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs border-b border-border-subtle pb-2">
-              <span className="font-semibold text-gray-200 flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-status-info" />
-                {card.displayName}
-              </span>
-              <span className="text-[10px] text-accent-mint font-mono bg-bg-darkest px-2 py-0.5 rounded font-bold">
-                a = {card.aValue}
-              </span>
+      {peerVersions.length > 0 && (
+        <div className="grid grid-cols-3 gap-4">
+          {peerVersions.map((card, idx) => (
+            <div
+              key={card.peerId + idx}
+              onClick={() => {
+                setSelectedPeerId(card.peerId);
+                setProposedCode(card.codeSnippet);
+              }}
+              className={`bg-bg-dark border rounded-lg p-3 flex flex-col gap-2 cursor-pointer transition-all ${
+                selectedPeerId === card.peerId
+                  ? 'border-accent-mint bg-accent-mint/5 shadow-lg'
+                  : 'border-border-subtle hover:border-gray-600'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs border-b border-border-subtle pb-2">
+                <span className="font-semibold text-gray-200 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-status-info" />
+                  {card.displayName}
+                </span>
+                <span className="text-[10px] text-accent-mint font-mono bg-bg-darkest px-2 py-0.5 rounded font-bold">
+                  a = {card.aValue}
+                </span>
+              </div>
+              <pre className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap leading-relaxed min-h-[90px]">
+                {card.codeSnippet}
+              </pre>
             </div>
-            <pre className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded text-gray-300 overflow-x-auto whitespace-pre-wrap leading-relaxed min-h-[90px]">
-              {card.codeSnippet}
-            </pre>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* AST Analysis Section */}
       <div className="bg-bg-dark border border-border-subtle rounded-lg p-3 flex flex-col gap-2 shadow">
@@ -315,7 +344,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
         <div className="text-[11px] font-mono bg-bg-darkest p-2.5 rounded border border-border-subtle flex flex-col gap-1 text-gray-300">
           <div>
             <span className="text-gray-400 font-semibold">Target Variable:</span>{' '}
-            <span className="text-accent-mint font-bold">a</span> (evaluated across 3 peer submissions)
+            <span className="text-accent-mint font-bold">a</span> (evaluated across available peer submissions)
           </div>
           <div>
             <span className="text-gray-400 font-semibold">Submitted Values:</span>{' '}
@@ -340,7 +369,7 @@ export const ConflictResolutionView: React.FC<ConflictResolutionViewProps> = ({
             {isStaged ? (
               <span className="text-status-pass font-bold flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                VERIFIED MERGE BROADCAST TO ALL 3 PEERS
+                VERIFIED MERGE BROADCAST TO ALL CONNECTED PEERS
               </span>
             ) : allPassed ? (
               <span className="text-status-pass font-bold">✓ ALL VERIFICATION GATES PASSED</span>

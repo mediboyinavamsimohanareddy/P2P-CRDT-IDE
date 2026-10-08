@@ -391,10 +391,12 @@ export class CollaborationManager {
       this.opLogManager.clearPending();
       this.verifier = new ConvergenceVerifier(this.crdtEngine, this.identity.peerId);
     } else if (!this.isHost) {
-      // Clear host starter template on joining peers so syncStep1/2 supplies the accurate host workspace state
-      const text = this.crdtEngine.getText('Main.java');
-      if (text.length > 0) {
-        text.delete(0, text.length);
+      // Clear host starter template on joining peers ONLY if Y.Doc hasn't loaded a locally persisted snapshot
+      if (!yDocHasFileContent(this.crdtEngine)) {
+        const text = this.crdtEngine.getText('Main.java');
+        if (text.length > 0) {
+          text.delete(0, text.length);
+        }
       }
     }
 
