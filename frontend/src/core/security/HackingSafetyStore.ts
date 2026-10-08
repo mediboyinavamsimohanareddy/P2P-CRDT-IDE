@@ -43,27 +43,10 @@ export interface AuditDecisionLog {
     | 'FIX_APPLIED'
     | 'EXECUTION_BLOCKED'
     | 'SHARE_VERIFY_PASSED'
-    | 'SHARE_VERIFY_BLOCKED'
-    | 'HOST_REJECTED_MALICIOUS_CODE'
-    | 'HOST_OVERRIDDEN_APPROVED'
-    | 'QUARANTINE_INTERCEPTED';
+    | 'SHARE_VERIFY_BLOCKED';
   filePath: string;
   details: string;
   threatLevel?: SecurityThreatStatus;
-}
-
-export interface QuarantinedCodeSubmission {
-  id: string;
-  peerId: string;
-  peerName?: string;
-  filePath: string;
-  code: string;
-  integerValue?: number;
-  findings: SecurityFinding[];
-  severity: SecuritySeverity;
-  submittedAt: number;
-  status: 'PENDING_HOST_REVIEW' | 'HOST_REJECTED' | 'HOST_APPROVED';
-  hostDecisionReason?: string;
 }
 
 type StoreListener = () => void;
@@ -72,7 +55,6 @@ export class HackingSafetyStore {
   private static instance: HackingSafetyStore;
   private verdicts: Map<string, FileVerdict> = new Map();
   private auditLogs: AuditDecisionLog[] = [];
-  private quarantinedSubmissions: Map<string, QuarantinedCodeSubmission> = new Map();
   private listeners: Set<StoreListener> = new Set();
 
   private constructor() {}
@@ -275,81 +257,9 @@ export class HackingSafetyStore {
     return [...this.auditLogs];
   }
 
-  quarantineSubmission(sub: Omit<QuarantinedCodeSubmission, 'id' | 'submittedAt' | 'status'>): QuarantinedCodeSubmission {
-    const id = `quarantine-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const submission: QuarantinedCodeSubmission = {
-      ...sub,
-      id,
-      submittedAt: Date.now(),
-      status: 'PENDING_HOST_REVIEW',
-    };
-    this.quarantinedSubmissions.set(id, submission);
-
-    this.addAuditLog({
-      action: 'QUARANTINE_INTERCEPTED',
-      filePath: sub.filePath,
-      details: `Harmful code from peer ${sub.peerId} intercepted and quarantined for host review. Severity: ${sub.severity}. Findings: ${sub.findings.map((f) => f.threatType).join(', ')}`,
-      threatLevel: 'High Risk',
-    });
-
-    this.notify();
-    return submission;
-  }
-
-  getQuarantinedSubmissions(): QuarantinedCodeSubmission[] {
-    return Array.from(this.quarantinedSubmissions.values());
-  }
-
-  getPendingQuarantinedSubmissions(): QuarantinedCodeSubmission[] {
-    return Array.from(this.quarantinedSubmissions.values()).filter(
-      (s) => s.status === 'PENDING_HOST_REVIEW'
-    );
-  }
-
-  getQuarantinedSubmission(id: string): QuarantinedCodeSubmission | undefined {
-    return this.quarantinedSubmissions.get(id);
-  }
-
-  hostRejectSubmission(id: string, reason = 'Harmful destructive code rejected by room host.'): boolean {
-    const sub = this.quarantinedSubmissions.get(id);
-    if (!sub) return false;
-
-    sub.status = 'HOST_REJECTED';
-    sub.hostDecisionReason = reason;
-
-    this.addAuditLog({
-      action: 'HOST_REJECTED_MALICIOUS_CODE',
-      filePath: sub.filePath,
-      details: `Host rejected harmful code submission from peer ${sub.peerId}: ${reason}`,
-      threatLevel: 'High Risk',
-    });
-
-    this.notify();
-    return true;
-  }
-
-  hostApproveSubmission(id: string, overrideReason = 'Host explicit security bypass.'): QuarantinedCodeSubmission | null {
-    const sub = this.quarantinedSubmissions.get(id);
-    if (!sub) return null;
-
-    sub.status = 'HOST_APPROVED';
-    sub.hostDecisionReason = overrideReason;
-
-    this.addAuditLog({
-      action: 'HOST_OVERRIDDEN_APPROVED',
-      filePath: sub.filePath,
-      details: `Host approved/overrode code submission from peer ${sub.peerId}: ${overrideReason}`,
-      threatLevel: 'Warning',
-    });
-
-    this.notify();
-    return sub;
-  }
-
   clear() {
     this.verdicts.clear();
     this.auditLogs = [];
-    this.quarantinedSubmissions.clear();
     this.notify();
   }
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OllamaLocalProvider } from './AIProvider';
 
 describe('OllamaLocalProvider', () => {
@@ -6,9 +6,9 @@ describe('OllamaLocalProvider', () => {
     vi.restoreAllMocks();
   });
 
-  it('generates local completion with mistral:latest metadata when API responds', async () => {
+  it('generates local completion with Groq model metadata when API responds', async () => {
     const mockResponse = {
-      response: 'public void test() { System.out.println("Hello Mistral"); }',
+      choices: [{ message: { content: 'public void test() { System.out.println("Hello Mistral"); }' } }],
     };
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
@@ -26,12 +26,12 @@ describe('OllamaLocalProvider', () => {
     expect(provider.id).toBe('ollama');
     expect(provider.name).toContain('Mistral:latest');
     expect(provider.isLocal).toBe(true);
-    expect(res.model).toBe('mistral:latest');
+    expect(res.model).toBe('llama-3.3-70b-versatile');
     expect(res.result).toContain('Hello Mistral');
     expect(res.confidence).toBe(95);
   });
 
-  it('falls back gracefully to offline local response when Ollama server is unreachable', async () => {
+  it('falls back gracefully to offline local response when API server is unreachable', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Connection refused'));
 
     const provider = new OllamaLocalProvider();
@@ -41,7 +41,7 @@ describe('OllamaLocalProvider', () => {
       language: 'java',
     });
 
-    expect(res.model).toContain('mistral:latest');
+    expect(res.model).toContain('llama-3.3-70b-versatile');
     expect(res.isLocal).toBe(true);
     expect(res.result).toContain('Write password validator');
   });

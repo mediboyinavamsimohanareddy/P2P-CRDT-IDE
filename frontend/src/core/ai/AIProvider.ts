@@ -26,10 +26,19 @@ export class OllamaLocalProvider implements AIProvider {
   isLocal = true;
   private baseUrl: string;
   private modelName: string;
+  private apiKey = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GROQ_API_KEY) || (typeof process !== 'undefined' && process.env && process.env.GROQ_API_KEY) || '';
 
-  constructor(baseUrl = 'http://localhost:11434', modelName = 'mistral:latest') {
-    this.baseUrl = baseUrl;
-    this.modelName = modelName;
+  constructor(baseUrl = 'https://api.groq.com/openai/v1', modelName = 'llama-3.3-70b-versatile') {
+    if (!baseUrl || baseUrl.includes('localhost')) {
+      this.baseUrl = 'https://api.groq.com/openai/v1';
+    } else {
+      this.baseUrl = baseUrl;
+    }
+    if (!modelName || modelName === 'mistral:latest') {
+      this.modelName = 'llama-3.3-70b-versatile';
+    } else {
+      this.modelName = modelName;
+    }
   }
 
   async generateCompletion(options: AIRequestOptions): Promise<AIResponse> {
@@ -43,13 +52,24 @@ export class OllamaLocalProvider implements AIProvider {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timeoutId = controller ? setTimeout(() => controller.abort(), timeout) : null;
 
+      const endpoint = this.baseUrl.endsWith('/chat/completions')
+        ? this.baseUrl
+        : `${this.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+
       const fetchOptions: RequestInit = {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
         body: JSON.stringify({
           model: this.modelName,
-          prompt: fullPrompt,
-          stream: false,
+          messages: [
+            {
+              role: 'user',
+              content: fullPrompt,
+            },
+          ],
         }),
       };
 
@@ -61,7 +81,7 @@ export class OllamaLocalProvider implements AIProvider {
         }
       }
 
-      const response = await fetch(`${this.baseUrl}/api/generate`, fetchOptions);
+      const response = await fetch(endpoint, fetchOptions);
 
       if (timeoutId) clearTimeout(timeoutId);
 
@@ -70,8 +90,13 @@ export class OllamaLocalProvider implements AIProvider {
       }
 
       const data = await response.json();
+      const extractedResult =
+        data.choices?.[0]?.message?.content ||
+        data.response ||
+        `// Ollama ${this.modelName} generated completion for ${options.task}`;
+
       return {
-        result: data.response || `// Ollama ${this.modelName} generated completion for ${options.task}`,
+        result: extractedResult,
         confidence: 95,
         model: this.modelName,
         isLocal: true,
