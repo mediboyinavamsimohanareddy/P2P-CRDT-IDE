@@ -718,14 +718,14 @@ export class CollaborationManager {
 
       const filePath =
         (typeof payloadObj.filePath === 'string' ? payloadObj.filePath : null) || this.activeFilePath;
-      // Capture both sides before the CRDT merges them; afterwards every laptop would look identical.
+      // Capture local code state before merging
       const localBeforeMerge = this.crdtEngine.getText(filePath).toString();
 
       this.crdtEngine.applyUpdate(updateBytes, `remote-${peerId}`);
       OperationLogStore.getInstance().logAppliedOp(peerId, 'UPDATE', filePath);
 
       if (payloadObj.resolved === true) {
-        // A verified merge settles the conflict; the sender's code is the resolution, not a competing version.
+        // A verified merge settles the conflict
         OverlapConflictDetector.getInstance().clear();
       } else if (typeof payloadObj.code === 'string') {
         const detector = OverlapConflictDetector.getInstance();

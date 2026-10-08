@@ -185,9 +185,11 @@ export class WebRtcTransport implements Transport {
 
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === 'disconnected') {
+        this.dataChannels.delete(peerId);
         this.peerStateCb?.(peerId, 'offline');
       }
       if (pc.iceConnectionState === 'failed') {
+        this.dataChannels.delete(peerId);
         this.peerStateCb?.(peerId, 'offline');
         const reason =
           'ICE failed (check Wi-Fi client isolation / Windows firewall). Falling back to LAN relay on the host laptop.';

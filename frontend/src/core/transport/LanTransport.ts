@@ -128,6 +128,7 @@ export class LanTransport implements Transport {
           for (const [peerId] of this.connectedPeers) {
             this.peerStateCb?.(peerId, 'offline');
           }
+          this.connectedPeers.clear();
         };
       } catch {
         resolve();
